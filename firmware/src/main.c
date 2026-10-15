@@ -156,15 +156,33 @@ static void melodee_init(void)
     ui.force = 1;
 }
 
+/* ATMOS splash: "FM MODULE" in 70s racing stripes. Plain RGB565 fills and the existing 30 px UI font:
+ * no new font, asset or generator step. The credits in the About menu (ui_menu.c) are untouched. */
+#define SPL_BG    0x18A2u   /* dark brown */
+#define SPL_RED   0xD263u
+#define SPL_ORG   0xF444u
+#define SPL_MUST  0xF5A3u   /* mustard */
+#define SPL_CREAM 0xF738u
+static void splash_draw(const char *sub)
+{
+    static const uint16_t band[4] = {SPL_RED, SPL_ORG, SPL_MUST, SPL_CREAM};
+    uint32_t i;
+    lcd_fill(0, 0, 240, 240, SPL_BG);
+    for (i = 0; i < 4u; i++) {
+        lcd_fill(0, 52u + i * 8u, 240u - i * 28u, 6, band[i]);            /* above: shrinking toward the title */
+        lcd_fill((3u - i) * 28u, 156u + i * 8u, 240u - (3u - i) * 28u, 6, band[3u - i]);   /* below: mirrored */
+    }
+    draw_text_line(0, 94, 240, &AF_L, "FM MODULE", SPL_CREAM, SPL_BG, 1);
+    draw_text_line(0, 130, 240, &AF_S, sub, SPL_MUST, SPL_BG, 1);
+}
+
 static void fm1_main(void)
 {
     int32_t knob = 512 * 16;
     fm1__pc_out(6,0);                         /* codec held quiet before flash and splash */
     settings_init();                           /* a readable default palette before loading flash */
     lcd_init();                                /* maintenance must be visible before any boot writes */
-    lcd_fill(0, 0, 240, 240, T_BG);
-    draw_text_box(0, 94, 240, &AF_L, "MELODEE", T_THEME, 1);
-    draw_text_box(0, 134, 240, &AF_S, "STARTING UP", T_MID, 1);
+    splash_draw("STARTING UP");
     lcd_sync();
     dsp_tables_init();                        /* the RAM lookup tables (FM6), before anything renders */
     persist_boot();
@@ -175,9 +193,7 @@ static void fm1_main(void)
     settings_init();
     clock_boot();                             /* the voice budget at the clock found (never changed) */
     if (boot_work.state != 2u) {
-        lcd_fill(0, 0, 240, 240, T_BG);
-        draw_text_box(0, 94, 240, &AF_L, "MELODEE", T_THEME, 1);
-        draw_text_box(0, 134, 240, &AF_S, "MULTI-ENGINE SYNTH", T_MID, 1);
+        splash_draw("LIVE PERFORMANCE");
     }
     if (melodee_dbg.magic != DBG_MAGIC) {
         memset(&melodee_dbg, 0, sizeof melodee_dbg);

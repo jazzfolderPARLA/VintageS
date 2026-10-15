@@ -45,7 +45,7 @@ static uint32_t um_len(uint32_t s)                 /* data bytes of a channel st
 static void um_byte(uint32_t b)
 {
     if (b >= 0xF8u) {
-        if (b == 0xF8u || b == 0xFAu || b == 0xFBu || b == 0xFCu) {
+        if (b == 0xFAu || b == 0xFBu || b == 0xFCu) {   /* ATMOS: 0xF8 (clock) and 0xFE (active sensing) are dropped here, at once */
             if (midi_enqueue(0xFu | b << 8, 2u))
                 um.msgs++;
             else

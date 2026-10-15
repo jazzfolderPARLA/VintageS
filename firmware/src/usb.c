@@ -628,7 +628,7 @@ static void midi_in_event(uint32_t pkt)
         sx_collect = 0;
 #endif
     }
-    if (cin == 0xFu && (st == 0xF8u || st == 0xFAu || st == 0xFBu || st == 0xFCu)) {
+    if (cin == 0xFu && (st == 0xFAu || st == 0xFBu || st == 0xFCu)) {   /* ATMOS: no 0xF8 clock */
         midi_enqueue(0xFu | st << 8, 1u);
         return;
     }
