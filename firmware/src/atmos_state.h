@@ -17,8 +17,7 @@
  * sound are remembered, so they are ready when the mode is turned on again.
  * MIDI channel and clock sync are NOT here: Melodee already keeps them (ext.glo, "GLO_KEPT"). */
 #pragma once
-#include <stdint.h>
-#include <string.h>
+#include <stdint.h>                  /* (the firmware has no libc: no string.h, no memcmp / memcpy here) */
 
 enum { ATMOS_SINGLE, ATMOS_DUAL, ATMOS_SPLIT, ATMOS_NMODE };
 #define ATMOS_NBANK 4u
@@ -40,7 +39,11 @@ static const uint8_t ATMOS_TAG[4] = {'A', 'T', 'M', 1};
 static void atmos_load(const uint8_t *row)
 {
     atmos_t a = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 0, 0, 0}};
-    if (!memcmp(row + ATMOS_TAGPOS, ATMOS_TAG, sizeof ATMOS_TAG)) {
+    uint32_t tag_ok = 1;
+    for (uint32_t i = 0; i < sizeof ATMOS_TAG; i++)
+        if (row[ATMOS_TAGPOS + i] != ATMOS_TAG[i])
+            tag_ok = 0;
+    if (tag_ok) {
         const uint8_t *d = row + ATMOS_DATA;
         /* d[0], the mode, is ignored on purpose: power-on is always SINGLE */
         if (d[1] < 128u) a.split_point = d[1];
@@ -59,7 +62,8 @@ static void atmos_save(uint8_t *row)
     d[2] = atmos.bank;  d[3] = atmos.preset;
     d[4] = atmos.b_bank; d[5] = atmos.b_preset;
     for (uint32_t i = 0; i < ATMOS_NBANK; i++) d[6 + i] = atmos.last[i];
-    memcpy(row + ATMOS_TAGPOS, ATMOS_TAG, sizeof ATMOS_TAG);
+    for (uint32_t i = 0; i < sizeof ATMOS_TAG; i++)
+        row[ATMOS_TAGPOS + i] = ATMOS_TAG[i];
 }
 
 /* Which layers a key plays: bit 0 = layer A (the selected track), bit 1 = layer B.
