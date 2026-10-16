@@ -1,1 +1,59 @@
+name: ATMOS build
 
+# Builds the dual-core firmware from the nightly branch and keeps the .fwsc as an Actions artifact.
+# It skips the host tests and the gh-pages publishing of nightly.yml: the tests compare the FM6 factory
+# sounds and the SEQ / ARP pages with stock Melodee, which ATMOS changes on purpose.
+on:
+  push:
+    branches: [nightly]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      JIELI_TOOLCHAIN: ${{ github.workspace }}/.nightly-deps/jieli/toolchain
+      AC79_SDK: ${{ github.workspace }}/.nightly-deps/sdk
+      PARALLEL: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: nightly
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libharfbuzz-dev libfribidi-dev libraqm-dev
+          python -m pip install Pillow fonttools
+
+      - uses: actions/cache@v4
+        with:
+          path: .nightly-deps
+          key: jieli-linux-sdk-d179b448-v1
+
+      - name: Fetch pinned SDK and toolchain
+        run: |
+          if [ ! -x "$JIELI_TOOLCHAIN/pi32v2/bin/clang" ]; then
+            tools/get_toolchain.sh "$GITHUB_WORKSPACE/.nightly-deps/jieli"
+          fi
+          if [ ! -d "$AC79_SDK/.git" ]; then
+            git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$AC79_SDK"
+          fi
+          test "$(git -C "$AC79_SDK" rev-parse HEAD)" = d179b4484759423312073f5fbb232501aa491047
+
+      - name: Build dual core
+        env:
+          MELODEE_DUAL_CORE: '1'
+          MELODEE_RAM_AUDIO: '1'
+        run: ./build.sh --nightly
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atmos-build-${{ github.run_number }}
+          path: build/*.fwsc
+          if-no-files-found: error
