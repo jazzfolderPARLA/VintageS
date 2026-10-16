@@ -138,6 +138,7 @@ static struct {
     uint8_t act;                 /* action pages: the column whose action OCT+ does, + 1; 0 = none (act_col) */
     uint32_t rec_t0;             /* REC press time (transport only) */
     uint32_t seq_t0;             /* SEQ held: direct SONG entry */
+    uint32_t arp_t0;             /* ATMOS: ARP press time (btn_hold: tap = next bank, held = the sound list) */
     uint32_t save_t0;            /* SAVE press time (btn_hold: held = project quick save) */
     uint32_t edit_t0;            /* EDIT press time (btn_hold: held = UNDO) */
     uint32_t oct_t0;             /* OCT+ press time (btn_hold: held = the page's sheet, ui_popup.c) */

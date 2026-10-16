@@ -27,6 +27,17 @@ static void led_put(uint8_t *nl, uint32_t id, int on)
     if (q != 0xFF && on)
         nl[q >> 3] |= (uint8_t)(1u << (q & 7u));
 }
+/* ATMOS: sets or clears one LED (led_put only lights) */
+static void led_set(uint8_t *nl, uint32_t id, int on)
+{
+    uint8_t q = led_pos[id];
+    if (q == 0xFF)
+        return;
+    if (on)
+        nl[q >> 3] |= (uint8_t)(1u << (q & 7u));
+    else
+        nl[q >> 3] &= (uint8_t)~(1u << (q & 7u));
+}
 static int led_get(const uint8_t *nl, uint32_t id)
 {
     uint8_t q = led_pos[id];
@@ -113,42 +124,37 @@ static int pattern_keys_on(void)
 /* the pattern keys (SEQ held), as the keys show things everywhere: bright the pattern playing (and the one held to copy),
  * dim the others that hold something, breathing the one waiting for the bar; the empty ones dark */
 static uint32_t pattern_leds(uint32_t *dim, uint32_t *breath)
-{
-    uint32_t m = 1u << PAT_KEY[TSEL->pattern], b;
+{   /* ATMOS: with SEQ held the keys set the split point: the key that is the split point lights */
+    uint32_t m = 0, k;
     *dim = *breath = 0;
-    for (b = 0; b < NPAT; b++)
-        if (b != TSEL->pattern && pattern_used(song.sel, b))
-            *dim |= 1u << PAT_KEY[b];
-    if (TSEL->pattern_next < NPAT) *breath = 1u << PAT_KEY[TSEL->pattern_next];
-    if (ui.pat_key) m |= 1u << PAT_KEY[ui.pat_key - 1u];
-    *dim &= ~(m | *breath);
-    *breath &= ~m;
+    for (k = 0; k < 27u; k++)
+        if (kb_map(TSEL, k) == atmos.split_point)
+            m |= 1u << k;
     return m;
 }
 static void pattern_keys(uint32_t notes)
-{
-    if (ui.pat_key && ui.pat_track != song.sel) ui.pat_key = ui.pat_copy = 0;
-    if (pattern_keys_on()) {
-        for (uint32_t b = 0; b < NPAT; b++) if (notes & (1u << PAT_KEY[b])) {
+{   /* ATMOS: SEQ held + a key: that key's note is the new split point and the mode becomes SPLIT (notes below it
+     * play layer B). Its release is then no SEQ tap (no mode change). */
+    uint32_t k;
+    if (!pattern_keys_on() || !notes)
+        return;
+    for (k = 0; k < 27u; k++)
+        if ((notes >> k) & 1u) {
+            uint32_t n = kb_map(TSEL, k);
+            if (n > 127u)
+                continue;
             ui.seq_t0 |= 2u;
-            if (!ui.pat_key) { ui.pat_key = (uint8_t)(b + 1u); ui.pat_track = song.sel; ui.pat_copy = 0; }
-            else if (ui.pat_key != b + 1u) {
-                int rc = pattern_copy(TSEL, ui.pat_key - 1u, b);
-                ui.pat_copy = 1;
-                ui_message(rc == 2 ? "PATTERN DATA FULL" : rc ? "STOP TO COPY" : "PATTERN COPIED");
-                ui.force = 1;
+            atmos.split_point = (uint8_t)n;
+            atmos.mode = ATMOS_SPLIT;
+            {   char m[12] = "SPLIT ";
+                m[6] = (char)('0' + (n / 100u) % 10u); m[7] = (char)('0' + (n / 10u) % 10u); m[8] = (char)('0' + n % 10u); m[9] = 0;
+                if (m[6] == '0') { m[6] = m[7]; m[7] = m[8]; m[8] = 0; if (m[6] == '0') { m[6] = m[7]; m[7] = 0; } }
+                ui_message(m);
             }
+            settings_save();                            /* the split point is kept; the mode is not */
+            ui.force = 1;
+            break;
         }
-    }
-    if (ui.pat_key && (!pattern_keys_on() || !(fm1_in.notes & (1u << PAT_KEY[ui.pat_key - 1u])))) {
-        if (!ui.pat_copy) {
-            uint32_t bank = ui.pat_key - 1u;
-            if (pattern_request(TSEL, bank)) ui_message("STOP SONG TO SWITCH");
-            else { char b[12] = "PATTERN "; b[8] = (char)('1' + bank); b[9] = 0; ui_message(b); }
-            ui.entry_open = 0; cursor_set(0); ui.force = 1;
-        }
-        ui.pat_key = ui.pat_copy = 0;
-    }
 }
 /* key k of track t as the keys play now (LIGHTS): bright while it sounds (pressed, or its note held on the track by
  * a key or MIDI), dim when it plays something (a kit's or the slices' own map: every key; QNT OFF: the notes in the
@@ -195,6 +201,12 @@ static void ui_leds(void)
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (ui.layer)                                       /* the layer's button blinks while its map is up */
         led_put(nl, panel.btn[layer_btn()], ((fm1_ms / 250u) & 1u) == 0u);
+    {   /* ATMOS: the SEQ LED: off in SINGLE, steady in DUAL, blinking at the internal tempo in SPLIT */
+        uint32_t beat_ms = beat_samples() * 1000u / FS, on = atmos.mode == ATMOS_DUAL;
+        if (atmos.mode == ATMOS_SPLIT)
+            on = beat_ms >= 2u ? (fm1_ms % beat_ms) < beat_ms / 2u : 1u;
+        led_set(nl, panel.btn[B_SEQ], (int)on);
+    }
     led_put(nl, panel.btn[B_PLAY], rolling && !counting); /* steady transport state, independent of audio block rate; */
     led_put(nw, panel.btn[B_PLAY], counting);           /* counting in: waiting */
     led_put(nl, panel.btn[B_REC], recording_now);
@@ -1363,6 +1375,59 @@ static uint32_t btn_hold(uint32_t *t0, uint32_t label, uint32_t now, int hold_ok
     return tap ? BT_TAP : BT_NONE;
 }
 
+/* ATMOS banks, on the ARP button: A DX7 (the FM6 engine), B PROPHET-5, C JUNO-106, D CZ-1.
+ * ARP tap: the next bank, with the sound it had last (atmos.last[]); ARP held: the sound list (PRESETS page).
+ * C has no engine yet: ATMOS_BANK_ENGINE[2] stays 255 and the tap skips it until the Juno engine exists. */
+static const uint8_t ATMOS_BANK_ENGINE[ATMOS_NBANK] = {ENGI_FM6, ENGI_PROPHET, 255u, ENGI_CZ};
+static const char *const ATMOS_BANK_NAME[ATMOS_NBANK] = {"A  DX7", "B  PROPHET-5", "C  JUNO-106", "D  CZ-1"};
+static uint32_t atmos_bank_of(uint32_t e)
+{
+    for (uint32_t b = 0; b < ATMOS_NBANK; b++)
+        if (ATMOS_BANK_ENGINE[b] == e)
+            return b;
+    return 255u;
+}
+static void atmos_bank_next(void)
+{
+    uint32_t cur = atmos_bank_of(TSEL->eng_req), b, n, e, pi;
+    if (cur >= ATMOS_NBANK)
+        cur = atmos.bank % ATMOS_NBANK;                 /* (the track plays another engine: from the last bank) */
+    else if (user_of(TSEL) >= USER_NONE && TSEL->preset < ATMOS_NPRE)
+        atmos.last[cur] = (uint8_t)TSEL->preset;        /* the factory sound it leaves, for the way back */
+    b = cur;
+    for (n = 0; n < ATMOS_NBANK; n++) {
+        b = (b + 1u) % ATMOS_NBANK;
+        if (ATMOS_BANK_ENGINE[b] != 255u)
+            break;
+    }
+    if (b == cur || ATMOS_BANK_ENGINE[b] == 255u)
+        return;
+    e = ATMOS_BANK_ENGINE[b];
+    pi = atmos.last[b];
+    if (pi >= ENGINES[e]->npresets)
+        pi = e == ENGI_PROPHET ? 1u : 0u;              /* (Prophet: its first factory program, as set_engine_of) */
+    engine_load_of(TSEL, e, pi);
+    atmos.bank = (uint8_t)b;
+    atmos.preset = (uint8_t)(pi < ATMOS_NPRE ? pi : 0u);
+    ui_say("BANK ", ATMOS_BANK_NAME[b]);
+    ui.force = 1;
+    settings_save();
+}
+static void atmos_open_list(void)
+{
+    uint32_t k;
+    for (k = 0; k < NPAGES; k++)
+        if (PAGES[k].graph == GR_BROWSE)
+            break;
+    if (k >= NPAGES)
+        return;
+    ui.home = 0;
+    ui.page = (uint8_t)k;
+    ui.fam_last[PAGES[k].fam] = ui.page;
+    page_entered();
+    ui.force = 1;
+}
+
 /* the quick layers: ui_layer.c (included after this file) */
 static void layer_masks(void);
 static void layer_lock_input(uint32_t pressed);
@@ -1643,6 +1708,7 @@ static void ui_input(void)
     uint32_t home = btn_hold(&ui.home_t0, B_HOME, now, 1);
     uint32_t rec = btn_hold(&ui.rec_t0, B_REC, now, !ui.menu && !ui.confirm && !name_on());   /* held: MIXER */
     uint32_t seq = btn_hold(&ui.seq_t0, B_SEQ, now, !ui.menu && !ui.confirm);
+    uint32_t arp = btn_hold(&ui.arp_t0, B_ARP, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = bank, held = list */
     uint32_t save = btn_hold(&ui.save_t0, B_SAVE, now, !ui.menu && !ui.confirm);
     uint32_t edit = btn_hold(&ui.edit_t0, B_EDIT, now, !ui.menu && !ui.confirm && !name_on() && !new_on() && !ui.ly);
     uint32_t octup = btn_hold(&ui.oct_t0, B_OCTUP, now, page_sheet() != 0u);   /* held: the page's sheet */
@@ -1718,6 +1784,8 @@ static void ui_input(void)
             ui.home_t0 |= 2u;
         if (pressed & (1u << panel.btn[B_SEQ]))
             ui.seq_t0 |= 2u;
+        if (pressed & (1u << panel.btn[B_ARP]))
+            ui.arp_t0 |= 2u;
         s=panel_enc(EN_PRESET);
         panel_enc(EN_ALGO);                             /* (another track: OCT- puts back the layer's track only) */
     }
@@ -1849,12 +1917,15 @@ static void ui_input(void)
     }
     if (lytap)                                          /* a layer's button acts on release (held: the layer) */
         layer_tap(lytap);
-    if (seq == BT_HOLD) {                               /* SEQ held: PATTERNS, the song under it (SONG: SELECT) */
-        for (k = 0; k < NPAGES; k++) if (PAGES[k].graph == GR_PATGRID) break;
-        ui.home = 0; ui.page = (uint8_t)k; ui.fam_last[FAM_SEQ] = ui.page; page_entered();
-    } else if (seq == BT_TAP) {
-        open_family(FAM_SEQ);
-    }
+    if (seq == BT_TAP) {                                /* ATMOS: SEQ tap: SINGLE -> DUAL -> SPLIT -> SINGLE */
+        atmos_mode_next();
+        ui_message(atmos.mode == ATMOS_DUAL ? "DUAL LAYER" : atmos.mode == ATMOS_SPLIT ? "SPLIT" : "SINGLE");
+        ui.force = 1;
+    }                                                   /* (SEQ held: its keys set the split point, above) */
+    if (arp == BT_TAP)                                  /* ATMOS: ARP tap: bank A -> B -> C -> D */
+        atmos_bank_next();
+    else if (arp == BT_HOLD)                            /* ARP held: the list of sounds */
+        atmos_open_list();
     if (home == BT_TAP)                                 /* HOME acts on release: a hold opens the menu */
         go_home();
     cursor_fix();                                       /* LEN may have changed (knob, editor, load) */
@@ -1892,6 +1963,7 @@ static void ui_input(void)
                 transport_req = 1;
             break;
         case B_SEQ:
+        case B_ARP:                                     /* ATMOS: tap / hold: above (no ARP page) */
         case B_REC:                                     /* tap / hold: above */
         case B_SAVE:
         case B_GLO:
@@ -2040,11 +2112,8 @@ static void ui_input(void)
     if ((s = panel_enc(EN_SELECT)) != 0) {          /* SELECT: pages; with SEQ / a step key / ENV / SCL: below */
         step_edit_combo();
         if(bulk_jog(s)) {
-        } else if (pattern_keys_on()) {
+        } else if (pattern_keys_on()) {                 /* ATMOS: SEQ held: SELECT does nothing (no patterns) */
             ui.seq_t0 |= 2u;
-            uint32_t from = TSEL->pattern_next < NPAT ? TSEL->pattern_next : TSEL->pattern;
-            if (pattern_request(TSEL, (uint32_t)clamp((int32_t)from + s, 0, NPAT - 1u))) ui_message("STOP SONG TO SWITCH");
-            ui.force = 1;
         } else if (step_gesture(s)) {                   /* ENV / SCL / a key held: the note's length, its place */
         } else if (!ui.home) {                          /* the section's pages (BPM: SEQ > TEMPO; the notes, the hits:
                                                          * KNOB 1) */

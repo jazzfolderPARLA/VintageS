@@ -11,6 +11,7 @@ static void preset_go(uint32_t n);
 
 enum { CAT_NONE, CAT_BASS, CAT_LEAD, CAT_PAD, CAT_PLUCK, CAT_KEYS, CAT_DRUM, CAT_FX, CAT_OTHER,
        CAT_ORGAN, CAT_STRING, CAT_BRASS, CAT_WIND, CAT_BELL, CAT_N };
+#include "dx7_rom.h"                  /* ATMOS: DX7_ROM_CATS (once only: #pragma once) */
 static const char *const CAT_NAME[CAT_N] = {"-", "BASS", "LEAD", "PAD", "PLUCK", "KEYS", "DRUM", "FX", "OTHER",
                                             "ORGAN", "STRING", "BRASS", "WIND", "BELL"};
 static const char CAT_LETTER[CAT_N + 1u] = "?BLPUKDFOGSRWE";   /* a letter's index is its CAT_* */
@@ -27,7 +28,7 @@ static const char *const PRESET_CAT[NENGINES] = {
 #endif
     [3] = "OLBBBBBBLLLLLLLLPSPPGGKKUUERFFFF",          /* SID */
     [10] = "DD",                                        /* DRUM: the kits */
-    [12] = "KEBRPEGUKRBEEKGSPLUEWEBEO",                 /* FM6, INIT VOICE */
+    [12] = DX7_ROM_CATS "O",                            /* FM6: the 128 DX7 ROM voices, INIT VOICE */
     [ENGI_CZ] = "ORRRSSSSSUUUBBBBURWSWWWWUKKKKKKKKGGGGGPPPEEEEEDEESSULLLLFDDDEFFFF",   /* INIT TONE, Casio's 64 */
     [ENGI_PROPHET] =                                    /* INIT, Sequential's 200 */
         "OOOKBPROOOGKLPWPOLOUUBEOEGFPOOBOEOOODDDEOOGKSGBPEPPLBROOOOPOKPKOFOSOOEPRODFLFOOEOULWOPBOLOPKFORGLPOBULROOSKOO"

@@ -1,4 +1,5 @@
 #include "recording_preferences.h"
+#include "atmos_state.h"                  /* ATMOS: mode, split, banks (favorites.factory[8] bytes 2..15) */
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
@@ -92,6 +93,7 @@ static int settings_import(persist_t *p, int n)
     favorites_user_hi = p->ext.spare[0];
     favorites.filter = favorites.filter == 1u;
 #endif
+    atmos_load(p->favorites.factory[ATMOS_ROW]);
     panel = p->panel.magic == PANEL_MAGIC ? p->panel : PANEL_DEFAULT;
     return 1;
 }
@@ -112,6 +114,7 @@ static void settings_export(persist_t *p)
     memcpy(&p->favorites, &favorites, sizeof favorites);
     p->ext.spare[0] = favorites_user_hi;
 #endif
+    atmos_save(p->favorites.factory[ATMOS_ROW]);   /* after the favorites copy above: it would overwrite these bytes */
     memcpy(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
 #if MELODEE_USB_AUDIO
     p->ext.usb_off = ua_off;

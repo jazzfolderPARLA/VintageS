@@ -37,10 +37,11 @@ typedef struct {
     uint8_t pr[4], pl[4], alg, fb, oks, lfs, lfd, lpmd, lamd, lfks, lfw, lpms, trnsp;
     char name[11];
 } fm6_rom_t;
-#include "eng_fm6_rom.h"         /* FM6_ROM[FM6_NROM]: F9.. */
+#include "eng_fm6_rom.h"         /* FM6_ROM[FM6_NROM]: (kept as the fallback past the bank) */
+#include "dx7_rom.h"             /* ATMOS bank A: DX7_ROM[128] = ROM1A, ROM1B, ROM2A, ROM2B (tools/gen_dx7_rom.py) */
 
 #define ENGI_FM6 12u             /* engines.c ENGINES[] (append-only) */
-#define FM6_NFAC (FM6_NFACTORY + FM6_NROM)        /* F1..F24: the factory patches */
+#define FM6_NFAC DX7_ROM_N                        /* ATMOS: F1..F128, the four DX7 ROM cartridges */
 #define FM6_PACKED 128u
 #define FM6_ON_ALL 0x3Fu
 
@@ -171,10 +172,14 @@ static void fm6_rom_patch(const fm6_rom_t *r, uint8_t *v)   /* a Melodee factory
     fm6_sanitize(v);
 }
 
-/* factory patch k (F1..F24) as a packed record */
+/* factory patch k (F1..F128) as a packed record */
 static void fm6_factory(uint32_t k, uint8_t *pk)
 {
     uint8_t v[FP_SIZE + 1u];
+    if (k < DX7_ROM_N) {                                 /* ATMOS: the cartridges' own 128-byte voices */
+        memcpy(pk, DX7_ROM[k], FM6_PACKED);
+        return;
+    }
     if (k < FM6_NFACTORY) {
         memcpy(pk, FM6_FACTORY[k], FM6_PACKED);
         return;
@@ -228,7 +233,7 @@ static void fm6_track_loaded(const track_t *t)
         uint8_t pk[FM6_PACKED], v[FP_SIZE + 1u];
         if (t->preset < FM6_NFAC)
             fm6_factory(t->preset, pk);
-        fm6_unpack(t->preset < FM6_NFAC ? pk : FM6_INIT, v);   /* (past F24: INIT VOICE) */
+        fm6_unpack(t->preset < FM6_NFAC ? pk : FM6_INIT, v);   /* (past F128: INIT VOICE) */
         fm6_put_patch(tr, v, 1);
     }
 }
@@ -1043,37 +1048,16 @@ static const char *const N_FM6_ALG[] = {"PAT", "1", "2", "3", "4", "5", "6", "7"
                                         "26", "27", "28", "29", "30", "31", "32", 0};
 /* {ALG, FB, MLVL, MRAT, MEG, VMOD, DTUN, unused}: neutral macros, DTUN on the pad. */
 #define FM6_PR(name, mono) {name, {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, mono}
+#define FM6_DX7_PR(name, mono) FM6_PR(name, mono),
 static const preset_t FM6_PRESETS[] = {
-    {"TINE EP", {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, 0},
-    {"BELL", {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, 0},
-    {"FM BASS", {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, 1},
-    {"BRASS", {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, 0},
-    {"PAD", {0, 0, 0, 0, 0, 0, 30, 0}, {0, 0, 127, 0}, 0, 0},
-    {"MARIMBA", {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, 0},
-    {"ORGAN", {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, 0},
-    {"PLUCK", {0, 0, 0, 0, 0, 0, 0, 0}, {0, 0, 127, 0}, 0, 0},
-    FM6_PR("DX TINE", 0),
-    FM6_PR("BRASS SECT", 0),
-    FM6_PR("SOLID BASS", 1),
-    FM6_PR("BELLS", 0),
-    FM6_PR("DX MARIMBA", 0),
-    FM6_PR("CLAVINET", 0),
-    FM6_PR("DRAWBARS", 0),
-    FM6_PR("STRINGS", 0),
-    FM6_PR("GLASS PAD", 0),
-    FM6_PR("SYNC LEAD", 1),
-    FM6_PR("HARP", 0),
-    FM6_PR("KALIMBA", 0),
-    FM6_PR("FLUTE", 1),
-    FM6_PR("STEEL DRUM", 0),
-    FM6_PR("SAW BASS", 1),
-    FM6_PR("TUBULAR", 0),
-    FM6_PR("INIT VOICE", 0),          /* the DX7's init voice, dry (after F24: the stores keep the
+    DX7_ROM_LIST(FM6_DX7_PR)                              /* ATMOS: F1..F128, named as the cartridges name them */
+    FM6_PR("INIT VOICE", 0),          /* the DX7's init voice, dry (after F128: the stores keep the
                                                          * factory's numbers) */
 };
+#undef FM6_DX7_PR
 #undef FM6_PR
 _Static_assert(FM6_NROM == 16u, "FM6: the presets name F9..F24");
-_Static_assert(NELEM(FM6_PRESETS) == FM6_NFAC + 1u, "FM6: F1..F24, then INIT VOICE");
+_Static_assert(NELEM(FM6_PRESETS) == FM6_NFAC + 1u, "FM6: F1..F128, then INIT VOICE");
 
 static const engine_t ENG_FM6 = {
     .name = "FM6",

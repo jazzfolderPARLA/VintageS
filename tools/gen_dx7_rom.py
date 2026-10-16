@@ -7,8 +7,40 @@ Uso:  python3 tools/gen_dx7_rom.py rom1a.syx rom1b.syx rom2a.syx rom2b.syx src/d
 Cada .syx debe medir 4104 bytes: F0 43 0n 09 20 00 + 32 x 128 bytes + checksum + F7.
 El script rechaza cualquier archivo que no cumpla (tamano, cabecera, checksum, bytes de 7 bits).
 Salida: DX7_ROM[128][128], los registros empaquetados tal cual (el mismo formato que
-FM6_PACKED en eng_fm6.c, asi que se cargan con fm6_unpack() sin conversion)."""
+FM6_PACKED en eng_fm6.c, asi que se cargan con fm6_unpack() sin conversion), mas
+DX7_ROM_LIST(X) con el nombre y el flag mono de cada voz (la tabla de presets de FM6) y
+DX7_ROM_CATS, una letra de categoria por voz (el navegador de presets de browse.c)."""
+import re
 import sys
+
+# letra de categoria de browse.c (CAT_LETTER "?BLPUKDFOGSRWE"), por palabras del nombre; el orden importa
+RULES = [
+    ('B', ('BASS',)),
+    ('E', ('BELL', 'MARIMBA', 'XYLO', 'VIBE', 'CELESTA', 'GLOCK', 'CHIME', 'KALIMBA', 'STEEL', 'GONG', 'MALLET', 'TUB')),
+    ('D', ('DRUM', 'TOM', 'SNARE', 'KICK', 'PERC', 'TIMP', 'CONGA', 'CLAP')),
+    ('G', ('ORGAN', 'ORG ', 'ACCORD')),
+    ('K', ('PIANO', 'E.P', 'EP ', 'CLAV', 'HARPSI', 'RHODES', 'TINE', 'KEYS', 'PNO')),
+    ('R', ('BRASS', 'TRUMPET', 'TRPT', 'TROMBONE', 'HORN', 'TUBA')),
+    ('S', ('STRING', 'VIOLIN', 'CELLO', 'ORCH', 'STR ')),
+    ('W', ('FLUTE', 'CLARINET', 'SAX', 'OBOE', 'PICCOLO', 'BASSOON', 'HARMONICA', 'WHISTLE', 'PAN ', 'BREATH')),
+    ('U', ('HARP', 'GUITAR', 'GTR', 'KOTO', 'BANJO', 'PLUCK', 'SITAR', 'LUTE', 'MANDOLIN')),
+    ('F', ('EFFECT', 'SFX', 'NOISE', 'SPACE', 'EXPLO', 'TRAIN', 'HELI', 'LASER', 'FX')),
+    ('L', ('LEAD', 'SOLO', 'SYN')),
+    ('P', ('PAD', 'CHOIR', 'VOX', 'VOICE')),
+]
+
+def clean_name(raw):
+    """A voice's 10 name bytes as a C string: printable ASCII, no quotes or backslashes, spaces collapsed."""
+    t = ''.join(chr(c) if 32 <= c < 127 else ' ' for c in raw)
+    t = t.replace('"', "'").replace('\\', '/').replace('?', ' ')
+    return re.sub(' +', ' ', t).strip() or 'VOICE'
+
+def category(name):
+    n = name.upper() + ' '
+    for letter, words in RULES:
+        if any(w in n for w in words):
+            return letter
+    return 'O'
 
 def load(path):
     d = open(path, 'rb').read()
@@ -39,6 +71,7 @@ def main():
         f.write(" * Banco DX7: 128 voces = ROM1A, ROM1B, ROM2A, ROM2B (32 cada una), en ese orden.\n")
         f.write(" * Cada registro son los 128 bytes empaquetados del bulk dump (sin cabecera ni checksum):\n")
         f.write(" * el mismo formato que FM6_PACKED, listo para fm6_unpack(). */\n")
+        f.write("#pragma once\n#include <stdint.h>\n")
         f.write("#define DX7_ROM_N 128u\n")
         f.write("static const uint8_t DX7_ROM[DX7_ROM_N][128] = {\n")
         for i, r in enumerate(rows):
@@ -48,6 +81,13 @@ def main():
                 f.write("        " + ", ".join(f"0x{c:02X}" for c in r[k:k + 16]) + ",\n")
             f.write("    },\n")
         f.write("};\n")
+        nm = [clean_name(r[118:128]) for r in rows]
+        cats = ''.join(category(x) for x in nm)
+        f.write("\n/* FM6's preset table (eng_fm6.c): X(name, mono). BASS voices play MONO. */\n")
+        f.write("#define DX7_ROM_LIST(X) \\\n")
+        f.write(" \\\n".join(f'    X("{x}", {1 if category(x) == "B" else 0})' for x in nm) + "\n")
+        f.write("\n/* one category letter per voice, in browse.c's CAT_LETTER (B bass, K keys, ...) */\n")
+        f.write(f'#define DX7_ROM_CATS "{cats}"\n')
     print(f"OK: {len(rows)} voces escritas en {out}")
 
 main()

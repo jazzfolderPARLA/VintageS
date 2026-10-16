@@ -1,3 +1,4 @@
+#include "atmos_state.h"        /* ATMOS: SINGLE / DUAL / SPLIT key routing (atmos_route) */
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Keyboard, scale, arpeggiator, sequencer and transport.
@@ -677,6 +678,35 @@ static void key_on(uint32_t k, track_t *t)
     last_note = kb_note[k];                         /* (step entry, the SAMPLE zone: the key's note) */
 }
 
+/* ATMOS layer B: the same as key_on / key_off, with its own per-key state (kb_chord_b, kb_chn_b, kb_trk2), so a key can
+ * sound on two tracks at once (DUAL) and release both. */
+static uint8_t kb_chord_b[27][CHORD_MAX], kb_chn_b[27], kb_trk2[27];
+static void key_on_b(uint32_t k, track_t *t)
+{
+    uint32_t n = chord_build(t, kb_note[k], kb_chord_b[k]), i, mc = trk_midi_ch(trk_index(t));
+    kb_chn_b[k] = 0;
+    for (i = 0; i < n; i++) {
+        uint32_t x = kb_chord_b[k][i];
+        if (midi_local_held(t, x))
+            continue;
+        input_on(t, x, 100);
+        midi_out_event(0x09u | (0x90u | mc) << 8 | x << 16 | 100u << 24);
+    }
+    kb_chn_b[k] = (uint8_t)n;
+}
+static void key_off_b(uint32_t k, track_t *t)
+{
+    uint32_t n = kb_chn_b[k], i, mc = trk_midi_ch(trk_index(t));
+    kb_chn_b[k] = 0;
+    for (i = 0; i < n; i++) {
+        uint32_t x = kb_chord_b[k][i];
+        if (midi_local_held(t, x))
+            continue;
+        input_off(t, x);
+        midi_out_event(0x08u | (0x80u | mc) << 8 | x << 16);
+    }
+}
+
 /* key k is up: the notes it started end, but those another key still holds */
 static void key_off(uint32_t k, track_t *t)
 {
@@ -735,11 +765,27 @@ static void keyboard_block(void)
                 kb_note[k] = (uint8_t)kb_map(&trk[kb_trk[k]], k);
             if (kb_note[k] == KB_SILENT)
                 continue;
-            key_on(k, &trk[kb_trk[k]]);
+            {   /* ATMOS: SINGLE (layer A), DUAL (A and B), SPLIT (below the split point only B) */
+                uint32_t m = atmos_route(kb_note[k]);
+                if (m & 2u) {
+                    uint32_t b = atmos_b_track(song.sel, NTRK);
+                    uint8_t na = kb_note[k];
+                    kb_note[k] = (uint8_t)kb_map(&trk[b], k);      /* (B's own scale / octave / transpose) */
+                    if (kb_note[k] != KB_SILENT) {
+                        kb_trk2[k] = (uint8_t)b;
+                        key_on_b(k, &trk[b]);
+                    }
+                    kb_note[k] = na;
+                }
+                if (m & 1u)
+                    key_on(k, &trk[kb_trk[k]]);
+            }
 #ifdef FM1_INPUT_LAT
             kb_lat(k);
 #endif
         } else {
+            if (kb_chn_b[k])                      /* ATMOS: the layer B notes of this key end first */
+                key_off_b(k, &trk[kb_trk2[k] % NTRK]);
             if ((kb_layer >> k) & 1u) {
                 kb_layer &= ~(1u << k);
                 continue;
