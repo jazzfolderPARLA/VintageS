@@ -1,3 +1,4 @@
+#include "atmos_state.h"        /* ATMOS: midi_rx_usb, the header's MIDI dot */
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* USB full-speed device on USB0: a
@@ -609,6 +610,8 @@ static void sysex_byte(uint8_t b)
 static void midi_in_event(uint32_t pkt)
 {
     uint32_t cin = pkt & 15u, st = (pkt >> 8) & 0xFFu;
+    if (cin != 0xFu || st < 0xF8u)
+        midi_rx_usb++;                                  /* ATMOS: a message that counts (not clock / active sensing) */
     if (cin >= 4u && cin <= 7u) {
         uint32_t k, nb = cin == 4u || cin == 7u ? 3u : cin == 6u ? 2u : 1u;
         for (k = 0; k < nb; k++)
@@ -628,10 +631,8 @@ static void midi_in_event(uint32_t pkt)
         sx_collect = 0;
 #endif
     }
-    if (cin == 0xFu && (st == 0xFAu || st == 0xFBu || st == 0xFCu)) {   /* ATMOS: no 0xF8 clock */
-        midi_enqueue(0xFu | st << 8, 1u);
+    if (cin == 0xFu)                                    /* ATMOS: real-time bytes (clock, start / stop, active sensing) are dropped */
         return;
-    }
     if (cin >= 8u && cin <= 0xEu && (st >> 4) == cin && !((pkt >> 16) & 0x80u) &&
         ((cin == 0xCu || cin == 0xDu) || !(pkt & 0x80000000u))) {
         midi_enqueue(pkt, 1u);

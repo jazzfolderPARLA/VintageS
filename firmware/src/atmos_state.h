@@ -21,8 +21,13 @@
 
 enum { ATMOS_SINGLE, ATMOS_DUAL, ATMOS_SPLIT, ATMOS_NMODE };
 #define ATMOS_NBANK 4u
+#define ATMOS_ENGI_SID 3u               /* the SID engine's number in engines.c ENGINES[] (no ENGI_ name): bank D with CZ-1 */
 #define ATMOS_NPRE  128u
 #define ATMOS_SPLIT_DEFAULT 60u          /* middle C */
+
+/* MIDI messages accepted by each input (clock and active sensing are dropped before this): the header's activity dots
+ * (ui_draw.c) light for a moment when either one changes. Written by the MIDI readers, read by the UI. */
+static volatile uint32_t midi_rx_usb, midi_rx_trs;
 
 typedef struct {
     uint8_t mode, split_point, bank, preset, b_bank, b_preset, last[ATMOS_NBANK];

@@ -331,7 +331,7 @@ static void midi_control(uint32_t ch, uint32_t cc, uint32_t value)
 }
 
 /* Keep the occasional controller/panic dispatch outside the hot rendering loop. */
-static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
+static void __attribute__((noinline)) midi_event_one(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
 {
     track_t *t = midi_track(ch);
     /* Controllers retain channel state even outside ROUT, but only mapped/owned tracks receive them.
@@ -346,4 +346,29 @@ static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t ch, uint3
         midi_control(ch, d1, d2);
     } else if (st == 0xD0u && t)
         mod_midi(t, st, d1, d2);
+}
+
+/* ATMOS layers for MIDI in. Channel ch (1-8) plays layer A; its shadow channel ch + 8 plays layer B (seq.c midi_track), so
+ * each layer keeps its own notes, pedal, bend and wheel with no new bookkeeping. SINGLE: as always, to A. DUAL: every
+ * message goes to both. SPLIT: a note-on below the split point goes to B, from it up to A; everything else (note-offs,
+ * pedal, bend, wheel) goes to both, and a layer that did not start a note ignores its note-off. Channels 9-16 count as
+ * 1-8 in DUAL and SPLIT. */
+static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
+{
+    if (atmos.mode == ATMOS_SINGLE) {
+        midi_event_one(st, ch, d1, d2);
+        return;
+    }
+    ch &= 7u;
+    if (st == 0x90u && d2) {
+        if (atmos.mode == ATMOS_DUAL) {
+            midi_event_one(st, ch, d1, d2);
+            midi_event_one(st, ch | 8u, d1, d2);
+        } else {
+            midi_event_one(st, d1 < atmos.split_point ? (ch | 8u) : ch, d1, d2);
+        }
+    } else {
+        midi_event_one(st, ch, d1, d2);
+        midi_event_one(st, ch | 8u, d1, d2);
+    }
 }

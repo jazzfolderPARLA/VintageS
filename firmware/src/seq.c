@@ -1136,6 +1136,8 @@ static track_t *midi_track(uint32_t ch)
 {
     uint32_t k, route = (uint32_t)song.g[G_ROUTE];
     uint32_t first = route > 1u ? (route - 1u) * 4u : 0u;
+    if (atmos.mode != ATMOS_SINGLE)                /* ATMOS DUAL / SPLIT: channels 1-8 are layer A, their shadows 9-16 layer B */
+        return ch >= 8u ? &trk[atmos_b_track(song.sel % NTRK, NTRK)] : TSEL;
     if (route != 1u && (ch < first || ch - first >= 4u))
         return 0;
     if (settings_drumch && ch + 1u == settings_drumch) {

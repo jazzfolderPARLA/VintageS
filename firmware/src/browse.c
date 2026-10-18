@@ -28,6 +28,7 @@ static const char *const PRESET_CAT[NENGINES] = {
 #endif
     [3] = "OLBBBBBBLLLLLLLLPSPPGGKKUUERFFFF",          /* SID */
     [10] = "DD",                                        /* DRUM: the kits */
+    [14] = "RRRWORPKGGGGUEKKEDERRSUSWWRUUULBLLLLBLFPKKODDDDPPUFPEPPFEFDFFDFFSSWGWWUFEUSOEGFFRFUWLFWBFWPFFEPWKGWFRPWFKWFWWKFBWUBSEFERPWSSFPFG",                      /* JUNO-106: the 128 factory patches (ATMOS) */
     [12] = DX7_ROM_CATS "O",                            /* FM6: the 128 DX7 ROM voices, INIT VOICE */
     [ENGI_CZ] = "ORRRSSSSSUUUBBBBURWSWWWWUKKKKKKKKGGGGGPPPEEEEEDEESSULLLLFDDDEFFFF",   /* INIT TONE, Casio's 64 */
     [ENGI_PROPHET] =                                    /* INIT, Sequential's 200 */

@@ -91,7 +91,7 @@ static int settings_import(persist_t *p, int n)
 #ifdef MELODEE_FAVORITES
     memcpy(&favorites, &p->favorites, sizeof favorites);
     favorites_user_hi = p->ext.spare[0];
-    favorites.filter = favorites.filter == 1u;
+    favorites.filter = 0;                               /* ATMOS: power-on with the whole list: the favourites view is REC's */
 #endif
     atmos_load(p->favorites.factory[ATMOS_ROW]);
     panel = p->panel.magic == PANEL_MAGIC ? p->panel : PANEL_DEFAULT;

@@ -317,7 +317,7 @@ static void stage_grid_at(const track_t *t, uint32_t page, uint32_t ph, uint16_t
         cv_circle(x, y, si == ph ? 6 : 5, si == ph ? T_TEXT : step_on(st) ? tc : st->time == ST_TIE ? ux_mix(bg, tc, 40) : T_LINE, bg);
     }
 }
-static void stage_col(uint32_t k)
+static void __attribute__((unused)) stage_col(uint32_t k)   /* (the four tracks: not drawn in ATMOS, kept) */
 {
     const track_t *t = &trk[k];
     uint32_t sel = k == song.sel, mute = t->p[P_MUTE] != 0u, arm = (song.rec >> k) & 1u, len = (uint32_t)t->p[P_SLEN];
@@ -450,15 +450,184 @@ static void stage_frame(void)
     lcd_fill(0, ST_PANEL_Y + ST_PANEL_H, 240, 240u - ST_PANEL_Y - ST_PANEL_H, T_BG);
 }
 
-/* every frame the knobs; every other frame (the scope's) the columns, then the panel last */
+/* ------------------------------------------------ ATMOS: the sounds --- */
+/* ATMOS has no sequencer tracks: Stage shows the sound alone (SINGLE: bank, name large, category) or the two layers
+ * side by side (DUAL: A, B; SPLIT: the low zone, which plays layer B, then the high one, layer A). One card of
+ * 232 x ST_COL_H at (4, ST_COL_Y), drawn in two bands (a canvas holds 240 x 124 at most) by moving cv_oy. While the
+ * knobs are out they cover its top CARD_H rows (the bank and role stay under them, the names show). */
+static uint32_t atmos_bank_of(uint32_t e);               /* ui_input.c */
+static const char *atmos_bank_word(uint32_t b);
+#define ST_SND_W 232
+#define ST_SND_BAND 76                                  /* rows a band holds: 2 x 76 = ST_COL_H */
+typedef struct {
+    char nm[16];
+    const char *en;
+    uint32_t bank, cat;
+    int pend, fav;
+} stage_snd_t;
+
+static void stage_layer(uint32_t k, stage_snd_t *s)
+{
+    const track_t *t = &trk[k];
+    uint32_t src, kk, eng;
+    s->pend = k == song.sel % NTRK && browse_pending();
+    if (s->pend) {                                      /* browsing: the sound the list shows, not yet loaded */
+        char tag[6];
+        src = browse_shown(&kk);
+        entry_label(src, kk, tag, s->nm);
+        if (!s->nm[0])
+            str_cpy(s->nm, tag, sizeof s->nm);
+        eng = src_engine(src, kk);
+    } else {
+        trk_short_name(k, s->nm);
+        if (t->eng_req == ENGI_PROPHET)
+            p5_short_name(t, s->nm, sizeof s->nm);
+        stage_entry(k, &src, &kk);
+        eng = t->eng_req;
+    }
+    s->en = ENGINES[eng_idx(eng)]->name;
+    s->bank = atmos_bank_of(eng);
+    s->cat = entry_cat(src, kk);
+    s->fav = !s->pend && k == song.sel % NTRK && preset_favorite();
+}
+/* a name over up to two lines of w px in font f: the first ends at the last space, '.' or '-' that fits */
+static void stage_name_lines(const char *s, const aafont_t *f, int32_t w, char *a, char *b)
+{
+    uint32_t i, cut = 0;
+    b[0] = 0;
+    if (text_w(f, s) <= w) {
+        str_cpy(a, s, 16);
+        return;
+    }
+    for (i = 0; s[i] && i < 15u; i++)
+        if (s[i] == ' ' || s[i] == '.' || s[i] == '-') {
+            uint32_t n = i + (s[i] != ' ');
+            str_cpy(a, s, n + 1u);
+            if (n && text_w(f, a) <= w)
+                cut = n;
+        }
+    if (!cut) {                                         /* one long word: its end is cut by the free text */
+        str_cpy(a, s, 16);
+        return;
+    }
+    str_cpy(a, s, cut + 1u);
+    str_cpy(b, s + cut + (s[cut] == ' '), 16);
+}
+/* a line centred on cx when it fits in w px, else from cx - w / 2 with its end cut */
+static void stage_line(int32_t cx, int32_t y, const aafont_t *f, const char *s, uint16_t c, uint16_t bg, int32_t w)
+{
+    if (text_w(f, s) <= w)
+        cv_text_c(cx, y, f, s, c, bg);
+    else
+        cv_free_text(cx - w / 2, y, f, s, c, bg, w);
+}
+static void stage_bank_chip(int32_t x, int32_t y, int32_t sz, const aafont_t *f, uint32_t bank, uint16_t tc)
+{
+    char l[2] = {bank < ATMOS_NBANK ? (char)('A' + bank) : '-', 0};
+    cv_rrect(x, y, sz, sz, 6, tc, T_LIFT);
+    cv_text_c(x + sz / 2, y + (sz - (int32_t)f->h) / 2, f, l, T_INK, tc);
+}
+static void stage_card_bg(int32_t x, int32_t w, uint16_t tc)
+{
+    cv_rrect(x, 0, w, ST_COL_H, 6, tc, T_BG);           /* outlined in the layer's colour, lifted */
+    cv_rrect(x + 1, 1, w - 2, ST_COL_H - 2, 5, T_LIFT, tc);
+    cv_rect(x + 4, 0, w - 8, 3, tc);
+}
+/* SINGLE: the bank (a lettered chip and its name, the category), the sound's name large, the mode at the foot */
+static void stage_card_single(const stage_snd_t *s, uint16_t tc)
+{
+    char a[16], b[16];
+    uint16_t nc = s->pend ? T_ACCENT : T_TEXT;
+    stage_card_bg(0, ST_SND_W, tc);
+    stage_bank_chip(10, 9, 32, &AF_M, s->bank, tc);
+    cv_text_fit(50, 8, &AF_M, s->bank < ATMOS_NBANK ? atmos_bank_word(s->bank) : s->en, T_TEXT, T_LIFT, 170);
+    if (s->cat && s->cat != CAT_OTHER && s->cat < CAT_N)
+        cv_text_on(50, 29, &AF_X, CAT_NAME[s->cat], T_MID, T_LIFT);
+    stage_name_lines(s->nm, &AF_L, 212, a, b);
+    if (b[0]) {
+        stage_line(116, 52, &AF_L, a, nc, T_LIFT, 212);
+        stage_line(116, 90, &AF_L, b, nc, T_LIFT, 212);
+    } else {
+        stage_line(116, 71, &AF_L, a, nc, T_LIFT, 212);
+    }
+    cv_text_c(116, 134, &AF_X, "SINGLE", T_DIM, T_LIFT);
+    if (s->fav)                                         /* a star when the sound is a favourite */
+        cv_icon_on(212, 12, 12, ICON_X_STAR, T_THEME, T_LIFT);
+}
+/* DUAL / SPLIT: half a card: its role, the bank, the name in two lines */
+static void stage_card_half(int32_t x, const stage_snd_t *s, uint16_t tc, const char *role)
+{
+    const int32_t w = 114;
+    char a[16], b[16];
+    uint16_t nc = s->pend ? T_ACCENT : T_TEXT;
+    stage_card_bg(x, w, tc);
+    cv_text_on(x + 7, 8, &AF_X, role, tc, T_LIFT);
+    stage_bank_chip(x + 7, 24, 22, &AF_S, s->bank, tc);
+    cv_text_fit(x + 34, 27, &AF_S, s->bank < ATMOS_NBANK ? atmos_bank_word(s->bank) : s->en, T_TEXT, T_LIFT, w - 40);
+    stage_name_lines(s->nm, &AF_M, w - 14, a, b);
+    cv_free_text(x + 7, 62, &AF_M, a, nc, T_LIFT, w - 12);
+    if (b[0])
+        cv_free_text(x + 7, 84, &AF_M, b, nc, T_LIFT, w - 12);
+    if (s->cat && s->cat != CAT_OTHER && s->cat < CAT_N)
+        cv_text_on(x + 7, 132, &AF_X, CAT_NAME[s->cat], T_MID, T_LIFT);
+}
+/* a note as "C3" (the split point's) */
+static void stage_note_name(char *d, uint32_t n)
+{
+    str_cpy(d, N_NOTE[n % 12u], 4);
+    fmt_int(d + str_len(d), (int32_t)(n / 12u) - 1);
+}
+static void stage_sounds(void)
+{
+    uint32_t mode = atmos.mode % ATMOS_NMODE, ka = song.sel % NTRK, kb = atmos_b_track(ka, NTRK), band, sig;
+    stage_snd_t sa, sb;
+    stage_layer(ka, &sa);
+    if (mode)
+        stage_layer(kb, &sb);
+    else
+        sb = sa;
+    sig = str_hash(str_hash(str_hash(str_hash(1u + mode * 3u + atmos.split_point * 7u + (uint32_t)stage.out * 31u +
+                                              (uint32_t)sa.pend * 5u + (uint32_t)sb.pend * 53u, sa.nm), sa.en), sb.nm), sb.en) +
+          sa.bank * 11u + sb.bank * 101u + sa.cat * 61u + sb.cat * 6151u + (uint32_t)sa.fav * 12289u + ka * 1009u + ux.gen * 977u + ux.pal * 31u;
+    sig |= 1u;
+    if (!ui.force && sig == stage.col[0])
+        return;
+    stage.col[0] = sig;
+    for (band = 0; band < 2u; band++) {
+        int32_t r0 = (int32_t)band * ST_SND_BAND;
+        cv_begin(ST_SND_W, ST_SND_BAND, T_BG);
+        cv_oy = -r0;                                    /* the band shows card rows r0 .. r0 + ST_SND_BAND */
+        if (!mode) {
+            stage_card_single(&sa, T_TRK(ka));
+        } else if (mode == ATMOS_DUAL) {
+            stage_card_half(0, &sa, T_TRK(ka), "LAYER A");
+            stage_card_half(118, &sb, T_TRK(kb), "LAYER B");
+        } else {
+            char low[16], high[16], n[6];
+            stage_note_name(n, atmos.split_point);
+            str_cpy(low, "LOW  < ", sizeof low);
+            str_cpy(low + str_len(low), n, 6);
+            str_cpy(high, "HIGH  ", sizeof high);
+            str_cpy(high + str_len(high), n, 6);
+            str_cpy(high + str_len(high), "+", 2);
+            stage_card_half(0, &sb, T_TRK(kb), low);    /* below the split point: layer B */
+            stage_card_half(118, &sa, T_TRK(ka), high);
+        }
+        cv_oy = 0;
+        if (stage.out && band == 0u)                    /* the knobs cover the top rows: below them only */
+            cv_blit_from(4, ST_COL_Y, CARD_H);
+        else
+            cv_blit(4, (uint32_t)(ST_COL_Y + r0));
+    }
+}
+
+/* every frame the knobs; every other frame (the scope's) the sounds, then the panel last */
 static void stage_draw(void)
 {
-    uint32_t k;
     stage_panel_hits();
     stage_knobs();
     if (!ui.force && (ui.frame & 1u))
         return;
-    for (k = 0; k < NTRK; k++)
-        stage_col(k);
+    stage_sounds();
     stage_panel();
 }

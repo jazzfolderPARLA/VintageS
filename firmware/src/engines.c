@@ -9,6 +9,7 @@
 #include "eng_phase.c"
 #include "eng_cz.c"
 #include "eng_sid.c"
+#include "eng_juno.c"          /* ATMOS: JUNO-106, the FM-106's voice */
 #include "eng_formant.c"
 #include "eng_trio.c"
 #include "eng_wheel.c"
@@ -59,6 +60,7 @@ static uint32_t eng_state_size(uint32_t e)
     case 3: return sizeof(sid_part_t);              /* SID (eng_sid.c) */
     case ENGI_DRUM: return sizeof(drum909_part_t);
     case ENGI_FM6: return sizeof(fm6_part_t);
+    case ENGI_JUNO: return sizeof(jn_part_t);
 #if MELODEE_SLICE
     case ENGI_SLICE: return sizeof(slc_rb_t);
 #endif
@@ -80,6 +82,7 @@ static drum909_part_t *drum909_part(uint32_t part) { return resource_get(RES_ENG
 static drum_lane_t *drum_kit_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(drum_lane_t) * DV_NLANE); }
 static drw_part_t *drw_of(const track_t *t) { return resource_get(RES_ENGINE0 + (uint32_t)(t - trk), sizeof(drw_part_t)); }
 static fm6_part_t *fm6_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(fm6_part_t)); }
+static jn_part_t *jn_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(jn_part_t)); }
 static cz_part_t *cz_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(cz_part_t)); }
 static sid_part_t *sid_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(sid_part_t)); }
 #if MELODEE_PROPHET
@@ -125,7 +128,7 @@ static const engine_t *const ENGINES[NENGINES] = {
 #else
     &ENG_RETIRED,                /* 9: retired PHYS; stored ID reserved */
 #endif
-    &ENG_DRUM,                   /* 10 (ENGI_DRUM) */
+    &ENG_DRUM,                   /* 10 (ENGI_DRUM): kept (the NEW project roles and the stored songs use it); ATMOS hides it from every picker */
 #if MELODEE_LEGACY_EXTRAS
     &ENG_NOISE,                  /* 11 */
 #else
@@ -137,7 +140,7 @@ static const engine_t *const ENGINES[NENGINES] = {
 #else
     &ENG_RETIRED,             /* 13: reserved (MELODEE_SLICE=0 builds without SLICE) */
 #endif
-    &ENG_RETIRED,                /* 14: retired OBXF; stored index reserved */
+    &ENG_JUNO,                   /* 14 (ENGI_JUNO): ATMOS's Juno-106, on the retired OBXF's index */
     &ENG_CZ,                     /* 15: native Casio CZ-1 */
     &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, /* 16..18 reserved */
     &ENG_P5_TEST,                /* 19: Prophet (ANALOG's ID 0 stays reserved) */
@@ -176,10 +179,10 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
 #else
     ENGI_CZ, 3,                   /* CZ-1 SID */
 #endif
+    ENGI_JUNO,                   /* JUNO-106 */
 #if MELODEE_SLICE
     13,                          /* SLICE */
 #endif
-    10,                          /* DRUM */
 };
 
 /* Retired synth records (ANALOG and DIGITAL since 2.0 too) retain their stored identity and render silence.
@@ -195,7 +198,7 @@ static int eng_extra_retired(uint32_t e)
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
 static int eng_ok(uint32_t e)
 {
-    return e < NENGINES && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != 14u && (MELODEE_SLICE || e != ENGI_SLICE);
+    return e < NENGINES && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != ENGI_DRUM && (MELODEE_SLICE || e != ENGI_SLICE);
 }
 static uint32_t eng_sound_idx(uint32_t e)
 {
