@@ -188,8 +188,6 @@ static void ui_leds(void)
     uint8_t nl[FM1_NCOL] = {0}, nd[FM1_NCOL] = {0}, nb[FM1_NCOL] = {0}, nw[FM1_NCOL] = {0};
     uint32_t k, c, play, lights = settings_lights % LIGHTS_N, pdim = 0, pbr = 0;
     uint32_t fam = cur_fam();
-    uint32_t armed = song.rec != 0u, rolling = song.playing != 0u, counting = (uint32_t)seq_counting();
-    uint32_t recording_now = (song.rec & ~song.rec_wait) && rolling && !counting && !chain.running;
     static uint8_t ready;
     if (!ready) {
         led_pos_init();

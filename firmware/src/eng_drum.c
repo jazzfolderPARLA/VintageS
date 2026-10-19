@@ -392,6 +392,15 @@ static const preset_t DRUM_PRESETS[] = {
     {"909 KIT", {DK_909, 64, 64, 64, 64, 100, 0, 0}, {0, 100, 127, 100}, 0, 0},
 };
 
+/* ATMOS: no sequencer and no way to pick the drum engine: its sound code stays out of the audio that runs from SRAM (it is
+ * about a third of it). The entry stays, with its pages and names, for the NEW project roles and the stored songs; a drum track
+ * plays nothing. */
+static void drum_off_note_on(track_t *t, voice_t *v) { (void)t; (void)v; }
+static void drum_off_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
+{
+    (void)t; (void)v; (void)out; (void)n; (void)m;
+}
+
 static const engine_t ENG_DRUM = {
     .name = "DRUM",
     .page_title = {"KIT", "HIT"},
@@ -407,12 +416,9 @@ static const engine_t ENG_DRUM = {
     },
     .presets = DRUM_PRESETS,
     .npresets = NELEM(DRUM_PRESETS),
-    .note_on = drum_note_on,
-    .render = drum_render,
-    .amp = drum_amp,
-    .block = drum_block,
+    .note_on = drum_off_note_on,                        /* ATMOS: the drum engine does not sound (stubs: see above) */
+    .render = drum_off_render,
     .knob = {P_E1, P_E2, P_E3, P_E4},
     .poly = DV_NLANE,
     .oneshot = 1,
-    .keys = drum_keys,
 };
