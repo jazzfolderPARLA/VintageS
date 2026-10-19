@@ -3,6 +3,10 @@ name: ATMOS build
 # Builds the dual-core firmware from the nightly branch and keeps the .fwsc as an Actions artifact.
 # It skips the host tests and the gh-pages publishing of nightly.yml: the tests compare the FM6 factory
 # sounds and the SEQ / ARP pages with stock Melodee, which ATMOS changes on purpose.
+#
+# v2: it writes a report on the run's SUMMARY page (errors and the last lines of each build log), so a failure can be
+# read without opening the logs; and if the build with the audio resident in SRAM fails, it builds again with the
+# audio in flash, so there is still a .fwsc to try in the emulator.
 on:
   push:
     branches: [nightly]
@@ -46,14 +50,68 @@ jobs:
           fi
           test "$(git -C "$AC79_SDK" rev-parse HEAD)" = d179b4484759423312073f5fbb232501aa491047
 
-      - name: Build dual core
+      - name: Build dual core, audio resident in SRAM (as the nightly does)
+        id: ram
+        continue-on-error: true
         env:
           MELODEE_DUAL_CORE: '1'
           MELODEE_RAM_AUDIO: '1'
-        run: ./build.sh --nightly
+        run: |
+          set -o pipefail
+          ./build.sh --nightly 2>&1 | tee build-ram.log
+
+      - name: Keep that build
+        if: steps.ram.outcome == 'success'
+        run: |
+          mkdir -p out/ram
+          cp build/*.fwsc out/ram/
+
+      - name: Build dual core again, audio in flash (only when the first build failed)
+        id: flash
+        if: steps.ram.outcome != 'success'
+        continue-on-error: true
+        env:
+          MELODEE_DUAL_CORE: '1'
+        run: |
+          set -o pipefail
+          ./build.sh --nightly 2>&1 | tee build-flash.log
+
+      - name: Keep that build
+        if: steps.flash.outcome == 'success'
+        run: |
+          mkdir -p out/flash
+          cp build/*.fwsc out/flash/
+
+      - name: Report (shown on the run's summary page)
+        if: always()
+        run: |
+          {
+            echo '## ATMOS build report'
+            echo
+            echo "- audio resident in SRAM: **${{ steps.ram.outcome }}**"
+            echo "- audio in flash: **${{ steps.flash.outcome }}**"
+            for f in build-ram.log build-flash.log; do
+              if [ -f "$f" ]; then
+                echo
+                echo "### $f: lines that mention a problem, then the last lines"
+                echo '```'
+                grep -n -i -E "error|undefined|headroom|overflow|overlaps|calls XIP|must remain|escaped|budget|Unsupported|Traceback" "$f" | head -40 || true
+                echo '...'
+                tail -25 "$f"
+                echo '```'
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: atmos-build-${{ github.run_number }}
-          path: build/*.fwsc
-          if-no-files-found: error
+          path: |
+            out/**
+            build-*.log
+          if-no-files-found: warn
+
+      - name: Fail when no firmware was built
+        if: steps.ram.outcome != 'success' && steps.flash.outcome != 'success'
+        run: exit 1
