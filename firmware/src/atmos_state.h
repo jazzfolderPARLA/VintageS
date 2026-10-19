@@ -87,3 +87,35 @@ static inline uint32_t atmos_b_track(uint32_t sel, uint32_t n) { return (sel + 1
 
 /* SEQ short press: SINGLE -> DUAL -> SPLIT -> SINGLE */
 static inline void atmos_mode_next(void) { atmos.mode = (uint8_t)((atmos.mode + 1u) % ATMOS_NMODE); }
+
+/* PLAY: the view (tap) and the metronome (held). view: 0 the sounds (Stage as usual), 1 the monitor (the wave large, the output
+ * level, the sounds with their bank, number and star, the mode, the voices). The metronome clicks from the audio block (mix.c atmos_click) at bpm, 4 beats to
+ * the bar, the first one higher; tick counts the beats (the PLAY LED and the header flash on it). */
+#define ATMOS_VIEW_N 2u
+#define ATMOS_BPM_MIN 30u
+#define ATMOS_BPM_MAX 250u
+typedef struct {
+    volatile uint8_t on;
+    uint8_t view;
+    volatile uint16_t bpm;
+    volatile uint32_t tick;
+    volatile uint32_t per;                              /* samples a beat: set with the tempo (the audio block cannot divide) */
+    uint32_t pos, beat, ph;
+    int32_t env;
+} atmos_met_t;
+static atmos_met_t atmos_met = {0, 0, 120, 0, 22050, 0, 0, 0, 0};   /* (22050: 120 bpm at 44.1 kHz) */
+
+
+/* The output's peak since the UI last read it (mix.c fills it after the master, the monitor's VU meter empties it), and its
+ * level in 20 segments of 3 dB: 0 dBFS at the top, -57 dB at the bottom. */
+static volatile uint32_t atmos_vu_peak;
+#define ATMOS_VU_N 20u
+static const uint16_t ATMOS_VU_THR[ATMOS_VU_N] = {46, 65, 92, 130, 184, 260, 368, 519, 734, 1036, 1464, 2067, 2920, 4125, 5827, 8231, 11626, 16422, 23197, 32767};   /* 32767 * 10^(-3 (19 - i) / 20) */
+static uint32_t atmos_vu_level(uint32_t peak)
+{
+    uint32_t i, n = 0;
+    for (i = 0; i < ATMOS_VU_N; i++)
+        if (peak >= ATMOS_VU_THR[i])
+            n++;
+    return n;
+}

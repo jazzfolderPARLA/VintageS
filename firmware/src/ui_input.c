@@ -207,8 +207,15 @@ static void ui_leds(void)
             on = beat_ms >= 2u ? (fm1_ms % beat_ms) < beat_ms / 2u : 1u;
         led_set(nl, panel.btn[B_SEQ], (int)on);
     }
-    led_put(nl, panel.btn[B_PLAY], rolling && !counting); /* steady transport state, independent of audio block rate; */
-    led_put(nw, panel.btn[B_PLAY], counting);           /* counting in: waiting */
+    {   /* ATMOS: the PLAY LED: flashes on every beat of the metronome; else lit while the keyboard / scope view is up */
+        static uint32_t beat_n, beat_ms;
+        uint32_t tk = atmos_met.tick;
+        if (tk != beat_n) {
+            beat_n = tk;
+            beat_ms = fm1_ms | 1u;
+        }
+        led_set(nl, panel.btn[B_PLAY], atmos_met.on ? (beat_ms && fm1_ms - (beat_ms & ~1u) < 70u) : atmos_met.view != 0u);
+    }
     led_put(nl, panel.btn[B_REC], preset_favorite());                 /* ATMOS: REC lit = the sound is a favourite, */
     led_put(nw, panel.btn[B_REC], list_mode() == LM_FAV);            /* breathing = in the favourites view */
     k = oct_leds();
@@ -1499,6 +1506,48 @@ static void atmos_b_bank_next(void)
     ui_say("LAYER B ", atmos_bank_word(b));
 }
 
+/* ATMOS PLAY: tap = the next view (the sounds / the monitor; with the metronome on: it stops), held = the
+ * metronome on / off. Its tempo is the ALGORITHM encoder's while it runs (the tracks are fixed, it had nothing left to do);
+ * SELECT is untouched. */
+static void atmos_met_set(int on)
+{
+    char b[8];
+    if (on) {
+        atmos_met.pos = 0;
+        atmos_met.beat = 0;
+        atmos_met.env = 0;
+    }
+    atmos_met.per = (uint32_t)FS * 60u / (uint32_t)atmos_met.bpm;
+    atmos_met.on = (uint8_t)on;
+    if (on) {
+        fmt_int(b, (int32_t)atmos_met.bpm);
+        ui_say("METRONOME ", b);
+    } else {
+        ui_message("METRONOME OFF");
+    }
+    ui.force = 1;
+}
+static void atmos_met_bpm(int32_t s)
+{
+    int32_t v = (int32_t)atmos_met.bpm + s;
+    char b[8];
+    v = v < (int32_t)ATMOS_BPM_MIN ? (int32_t)ATMOS_BPM_MIN : v > (int32_t)ATMOS_BPM_MAX ? (int32_t)ATMOS_BPM_MAX : v;
+    atmos_met.bpm = (uint16_t)v;
+    atmos_met.per = (uint32_t)FS * 60u / (uint32_t)v;
+    fmt_int(b, v);
+    ui_say("BPM ", b);
+    ui.force = 1;
+}
+static void atmos_view_next(void)
+{
+    static const char *const NAME[ATMOS_VIEW_N] = {"SOUNDS", "MONITOR"};
+    if (!ui.home)
+        go_home();
+    atmos_met.view = (uint8_t)((atmos_met.view + 1u) % ATMOS_VIEW_N);
+    ui_message(NAME[atmos_met.view]);
+    ui.force = 1;
+}
+
 /* the quick layers: ui_layer.c (included after this file) */
 static void layer_masks(void);
 static void layer_lock_input(uint32_t pressed);
@@ -1787,6 +1836,7 @@ static void ui_input(void)
     }
     uint32_t seq = btn_hold(&ui.seq_t0, B_SEQ, now, !ui.menu && !ui.confirm);
     uint32_t arp = btn_hold(&ui.arp_t0, B_ARP, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = bank, held = list */
+    uint32_t play = btn_hold(&ui.play_t0, B_PLAY, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = view, held = metronome */
     uint32_t save = btn_hold(&ui.save_t0, B_SAVE, now, !ui.menu && !ui.confirm);
     uint32_t edit = btn_hold(&ui.edit_t0, B_EDIT, now, !ui.menu && !ui.confirm && !name_on() && !new_on() && !ui.ly);
     uint32_t octup = btn_hold(&ui.oct_t0, B_OCTUP, now, page_sheet() != 0u);   /* held: the page's sheet */
@@ -1864,6 +1914,8 @@ static void ui_input(void)
             ui.seq_t0 |= 2u;
         if (pressed & (1u << panel.btn[B_ARP]))
             ui.arp_t0 |= 2u;
+        if (pressed & (1u << panel.btn[B_PLAY]))
+            ui.play_t0 |= 2u;
         s=panel_enc(EN_PRESET);
         panel_enc(EN_ALGO);                             /* (another track: OCT- puts back the layer's track only) */
     }
@@ -2002,6 +2054,14 @@ static void ui_input(void)
         atmos_bank_next();
     else if (arp == BT_HOLD)                            /* ARP held: the list of sounds */
         atmos_open_list();
+    if (play == BT_TAP) {                               /* ATMOS: PLAY tap: the next view; with the metronome on, it stops */
+        if (atmos_met.on)
+            atmos_met_set(0);
+        else
+            atmos_view_next();
+    } else if (play == BT_HOLD) {                       /* PLAY held: the metronome, on / off */
+        atmos_met_set(!atmos_met.on);
+    }
     if (home == BT_TAP)                                 /* HOME acts on release: a hold opens the menu */
         go_home();
     cursor_fix();                                       /* LEN may have changed (knob, editor, load) */
@@ -2024,7 +2084,7 @@ static void ui_input(void)
             continue;
         b = panel_btn_of(id);
         switch (b) {
-        case B_PLAY:                                    /* ATMOS: there is no sequencer: PLAY does nothing */
+        case B_PLAY:                                    /* ATMOS: tap / hold: above (view, metronome) */
             break;
         case B_SEQ:
         case B_ARP:                                     /* ATMOS: tap / hold: above (no ARP page) */
@@ -2174,9 +2234,9 @@ static void ui_input(void)
         fm6_opsel = (uint8_t)clamp((int32_t)fm6_opsel + (s > 0 ? 1 : -1), 0, 5);
         ui.force = 1;
     }
-    if ((s = panel_enc(EN_ALGO)) != 0) {           /* ALGORITHM: the selected track, on every page */
-        step_edit_combo();
-        track_select((uint32_t)clamp((int32_t)song.sel + (s > 0 ? 1 : -1), 0, NTRK - 1));
+    if ((s = panel_enc(EN_ALGO)) != 0) {           /* ATMOS: ALGORITHM is the metronome's tempo while it runs (the tracks are fixed) */
+        if (atmos_met.on)
+            atmos_met_bpm(s);
     }
     if ((s = panel_enc(EN_SELECT)) != 0) {          /* SELECT: pages; with SEQ / a step key / ENV / SCL: below */
         step_edit_combo();

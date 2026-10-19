@@ -3,6 +3,7 @@
 /* Engine output -> optional stereo insert -> track level -> master.
  * The bypass retains the original level/pan/spread path exactly. */
 #include "fx.c"
+#include "atmos_state.h"             /* ATMOS: atmos_met, the metronome's click */
 static int32_t part_buf[CTL], mix_l[CTL], mix_r[CTL];
 static uint8_t fx_send_on;
 static uint32_t fx_extra_gain[FX_SLOTS-1u];
@@ -229,6 +230,40 @@ static __attribute__((noinline,section(".dsp_text"))) void master_samples(int32_
     }
     fx_bus_mix=gain;
 }
+/* ATMOS metronome: a short click on every beat, added to both channels after the FX bus (it is not effected, not
+ * limited by the part levels), sample-accurate: bpm beats a minute, four to the bar, the first one higher and stronger.
+ * A triangle burst (1000 Hz, 1600 Hz on the bar) with an exponential decay of about 12 ms. */
+static __attribute__((noinline,section(".audio_text"))) void atmos_click(uint32_t n)
+{
+    uint32_t i, per = atmos_met.per;
+    if (!atmos_met.on) {
+        atmos_met.env = 0;
+        return;
+    }
+    if (per < 1000u) per = 1000u;
+    for (i = 0; i < n; i++) {
+        if (atmos_met.pos == 0) {                          /* a beat starts: the click */
+            atmos_met.env = atmos_met.beat == 0 ? 14000 : 9000;
+            atmos_met.ph = 0;
+            atmos_met.tick++;
+        }
+        if (atmos_met.env) {
+            int32_t tri = (int32_t)(atmos_met.ph >> 16) - 32768, s;
+            if (tri < 0) tri = -tri;
+            tri = (tri - 16384) * 2;
+            s = (int32_t)(((int64_t)tri * atmos_met.env) >> 15);
+            mix_l[i] += s;
+            mix_r[i] += s;
+            atmos_met.ph += atmos_met.beat == 0 ? (uint32_t)(((uint64_t)1600u << 32) / FS) : (uint32_t)(((uint64_t)1000u << 32) / FS);
+            atmos_met.env -= atmos_met.env >> 9;
+            if (atmos_met.env < 8) atmos_met.env = 0;
+        }
+        if (++atmos_met.pos >= per) {
+            atmos_met.pos = 0;
+            atmos_met.beat = (atmos_met.beat + 1u) & 3u;
+        }
+    }
+}
 static void mix_block(int32_t *out,uint32_t n)
 {
 #if defined(MELODEE_FX_PROFILE) && MELODEE_FX_PROFILE && defined(FM1_IRQ_TARGET)
@@ -247,6 +282,15 @@ static void mix_block(int32_t *out,uint32_t n)
     /* Dry gain overlaps the shared wet processing; limiter sees their sum. */
     for(uint32_t i=0;i<n;i++){mix_l[i]=((mix_l[i]>>2)*(int32_t)song.master_q12)>>10;mix_r[i]=((mix_r[i]>>2)*(int32_t)song.master_q12)>>10;}
     fx_bus_join();
+    atmos_click(n);
     void (*volatile run)(int32_t *,uint32_t)=master_samples;
     run(out,n);
+    {   /* ATMOS: the output's peak, for the monitor's VU meter */
+        uint32_t i, pk = atmos_vu_peak;
+        for (i = 0; i < 2u * n; i++) {
+            uint32_t a = (uint32_t)(out[i] < 0 ? -out[i] : out[i]);
+            if (a > pk) pk = a;
+        }
+        atmos_vu_peak = pk;
+    }
 }

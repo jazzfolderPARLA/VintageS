@@ -12,6 +12,50 @@
 #include "fm106_tables.h"
 
 /* Fast clamp */
+/* ATMOS: the two variable divisions of fm106_vcf_process without a division (the audio runs from SRAM, where the compiler's
+ * divide helpers in flash cannot be called). Both give exactly what the integer division gave. */
+static const uint16_t FM106_NOISE_LVL[13] = {327, 163, 109, 81, 65, 54, 46, 40, 36, 32, 29, 27, 25};   /* 327 / (1 + i) */
+#define FM106_RCP_SHIFT 6
+#define FM106_RCP_N 288          /* den 4096 .. 4096 + 288 * 64: kG is at most 18000, so den stays below 22100 */
+static const uint16_t FM106_RCP_TAB[FM106_RCP_N + 1] = {
+    4096, 4032, 3971, 3912, 3855, 3799, 3744, 3692, 3640, 3591, 3542, 3495,
+    3449, 3404, 3360, 3318, 3276, 3236, 3196, 3158, 3120, 3084, 3048, 3013,
+    2978, 2945, 2912, 2880, 2849, 2818, 2788, 2759, 2730, 2702, 2674, 2647,
+    2621, 2595, 2570, 2545, 2520, 2496, 2473, 2449, 2427, 2404, 2383, 2361,
+    2340, 2319, 2299, 2279, 2259, 2240, 2221, 2202, 2184, 2166, 2148, 2131,
+    2114, 2097, 2080, 2064, 2048, 2032, 2016, 2001, 1985, 1971, 1956, 1941,
+    1927, 1913, 1899, 1885, 1872, 1859, 1846, 1833, 1820, 1807, 1795, 1783,
+    1771, 1759, 1747, 1736, 1724, 1713, 1702, 1691, 1680, 1669, 1659, 1648,
+    1638, 1628, 1618, 1608, 1598, 1588, 1579, 1569, 1560, 1551, 1542, 1533,
+    1524, 1515, 1506, 1497, 1489, 1481, 1472, 1464, 1456, 1448, 1440, 1432,
+    1424, 1416, 1409, 1401, 1394, 1387, 1379, 1372, 1365, 1358, 1351, 1344,
+    1337, 1330, 1323, 1317, 1310, 1304, 1297, 1291, 1285, 1278, 1272, 1266,
+    1260, 1254, 1248, 1242, 1236, 1230, 1224, 1219, 1213, 1208, 1202, 1197,
+    1191, 1186, 1180, 1175, 1170, 1165, 1159, 1154, 1149, 1144, 1139, 1134,
+    1129, 1125, 1120, 1115, 1110, 1106, 1101, 1096, 1092, 1087, 1083, 1078,
+    1074, 1069, 1065, 1061, 1057, 1052, 1048, 1044, 1040, 1036, 1032, 1028,
+    1024, 1020, 1016, 1012, 1008, 1004, 1000, 996, 992, 989, 985, 981,
+    978, 974, 970, 967, 963, 960, 956, 953, 949, 946, 942, 939,
+    936, 932, 929, 926, 923, 919, 916, 913, 910, 907, 903, 900,
+    897, 894, 891, 888, 885, 882, 879, 876, 873, 870, 868, 865,
+    862, 859, 856, 853, 851, 848, 845, 842, 840, 837, 834, 832,
+    829, 826, 824, 821, 819, 816, 814, 811, 809, 806, 804, 801,
+    799, 796, 794, 791, 789, 787, 784, 782, 780, 777, 775, 773,
+    771, 768, 766, 764, 762, 759, 757, 755, 753, 751, 748, 746,
+    744
+};
+/* 16777216 / den for den >= 4096: a linear estimate from the table, then the +-1 of the rounding corrected with multiplies */
+static inline int32_t fm106_inv_den(int32_t den)
+{
+    uint32_t d = (uint32_t)den, j = (d - 4096u) >> FM106_RCP_SHIFT, f = (d - 4096u) & ((1u << FM106_RCP_SHIFT) - 1u);
+    int32_t q;
+    if (j >= FM106_RCP_N) j = FM106_RCP_N - 1u;
+    q = (int32_t)FM106_RCP_TAB[j] - (int32_t)(((uint32_t)FM106_RCP_TAB[j] - FM106_RCP_TAB[j + 1u]) * f >> FM106_RCP_SHIFT);
+    while ((uint32_t)(q + 1) * d <= 16777216u) q++;
+    while ((uint32_t)q * d > 16777216u) q--;
+    return q;
+}
+
 static inline int32_t fm106_clamp(int32_t v, int32_t lo, int32_t hi)
 {
     return v < lo ? lo : v > hi ? hi : v;
@@ -161,7 +205,7 @@ static inline int32_t fm106_vcf_process(fm106_vcf_t *f, int32_t input, uint16_t 
     f->noise_seed = f->noise_seed * 196314165u + 907633515u;
     if (energy < 50) {
         int32_t white = (int32_t)(f->noise_seed >> 16) - 32768;
-        int32_t noise_lvl = 327 / (1 + (energy >> 2));
+        int32_t noise_lvl = (int32_t)FM106_NOISE_LVL[energy >> 2];   /* energy < 50 here: index 0..12 */
         input += (white * noise_lvl) >> 15;
     }
 
@@ -193,7 +237,7 @@ static inline int32_t fm106_vcf_process(fm106_vcf_t *f, int32_t input, uint16_t 
     /* TPT feedback denominator reciprocal: 1 / (1 + k*G) in Q12 */
     int32_t kG = (k * G) >> 15;           /* Q12 */
     int32_t den = 4096 + kG;
-    int32_t invDen = (4096 * 4096) / (den > 0 ? den : 1);
+    int32_t invDen = fm106_inv_den(den > 4096 ? den : 4096);
 
     /* Linear cascade predictor with 64-bit sum of products to prevent 32-bit overflow */
     int64_t sum_prod = (int64_t)z0 * g1_3 + (int64_t)z1 * g1_2 + (int64_t)z2 * g1;

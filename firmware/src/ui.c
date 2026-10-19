@@ -139,6 +139,7 @@ static struct {
     uint32_t rec_t0;             /* REC press time (transport only) */
     uint32_t seq_t0;             /* SEQ held: direct SONG entry */
     uint32_t arp_t0;             /* ATMOS: ARP press time (btn_hold: tap = next bank, held = the sound list) */
+    uint32_t play_t0;            /* ATMOS: PLAY press time (btn_hold: tap = the view / metronome off, held = the metronome) */
     uint32_t save_t0;            /* SAVE press time (btn_hold: held = project quick save) */
     uint32_t edit_t0;            /* EDIT press time (btn_hold: held = UNDO) */
     uint32_t oct_t0;             /* OCT+ press time (btn_hold: held = the page's sheet, ui_popup.c) */
@@ -984,11 +985,15 @@ static void select_engine(uint32_t e)
 
 #include "browse.c"                     /* the PRESETS list: LIST, categories, RECENT, browsing */
 
+static int preset_favorite_of(const track_t *t)         /* ATMOS: for any track (the Stage's layer B too) */
+{
+    uint32_t k = user_of(t);
+    uint32_t e=t->eng_req;
+    return favorite_has(k<USER_NONE ? (t->user_native?(e==ENGI_PROPHET?USER_NATIVE_P5:e==ENGI_FM6?USER_NATIVE_FM:USER_NATIVE_CZ):USER_GENERAL) : e,k<USER_NONE?k:t->preset);
+}
 static int preset_favorite(void)
 {
-    uint32_t k = user_of(TSEL);
-    uint32_t e=TSEL->eng_req;
-    return favorite_has(k<USER_NONE ? (TSEL->user_native?(e==ENGI_PROPHET?USER_NATIVE_P5:e==ENGI_FM6?USER_NATIVE_FM:USER_NATIVE_CZ):USER_GENERAL) : e,k<USER_NONE?k:TSEL->preset);
+    return preset_favorite_of(TSEL);
 }
 static void preset_mark(int on)
 {

@@ -105,6 +105,66 @@ int main(void)
         midi_in_event(0x9u | 0x90u << 8 | 60u << 16 | 100u << 24);
         bad += check("a USB note-on is counted (the header's MIDI dot)", midi_rx_usb == before + 1u);
     }
+
+    /* PLAY: the view (tap), the metronome (held), its tempo on ALGORITHM, SELECT untouched */
+    go_home();
+    atmos_met.view = 0;
+    press(B_PLAY);  bad += check("PLAY tap: the monitor", atmos_met.view == 1 && ui.home);
+    press(B_PLAY);  bad += check("PLAY tap: back to the sounds", atmos_met.view == 0);
+    press(B_PLAY);  press(B_PLAY);
+    bad += check("PLAY taps: two views only (monitor, sounds)", atmos_met.view == 0);
+    bad += check("VU: silence is level 0, full scale 20, -6 dB 18, -30 dB 10",
+                 atmos_vu_level(0) == 0 && atmos_vu_level(32767) == 20 && atmos_vu_level(16422) == 18 && atmos_vu_level(1036) == 10);
+    bad += check("the metronome starts off, at 120", !atmos_met.on && atmos_met.bpm == 120);
+    hold(B_PLAY);   bad += check("PLAY held: the metronome on", atmos_met.on == 1);
+    turn(EN_ALGO, 1);  turn(EN_ALGO, 1);
+    bad += check("ALGORITHM: the tempo (120 -> 122)", atmos_met.bpm == 122);
+    turn(EN_ALGO, -1);
+    bad += check("ALGORITHM the other way (121)", atmos_met.bpm == 121);
+    {   uint16_t b0 = atmos_met.bpm;
+        turn(EN_SELECT, 1);
+        bad += check("SELECT does not touch the tempo", atmos_met.bpm == b0);
+    }
+    for (k = 0; k < 400; k++) turn(EN_ALGO, 1);
+    bad += check("the tempo stops at 250", atmos_met.bpm == 250);
+    for (k = 0; k < 400; k++) turn(EN_ALGO, -1);
+    bad += check("... and at 30", atmos_met.bpm == 30);
+    atmos_met.bpm = 120;
+    press(B_PLAY);  bad += check("PLAY tap with the metronome on: it stops (no view change)", !atmos_met.on && atmos_met.view == 0);
+    turn(EN_ALGO, 1);
+    bad += check("ALGORITHM with the metronome off: nothing", atmos_met.bpm == 120);
+
+    /* the click, in the audio: one every 22050 samples at 120 bpm, the first one stronger, nothing when off */
+    {   uint32_t f, i, n = 0, first[8], quiet = 2000;
+        int32_t peak_bar = 0, peak_beat = 0, silent_peak = 0;
+        atmos_met.on = 0;
+        for (f = 0; f < 4096; f += CTL) {
+            int32_t o[2 * CTL];
+            mix_block(o, CTL);
+            for (i = 0; i < CTL; i++) { int32_t a = o[2 * i] < 0 ? -o[2 * i] : o[2 * i]; if (a > silent_peak) silent_peak = a; }
+        }
+        bad += check("metronome off: no click in the audio", silent_peak == 0);
+        atmos_met.pos = 0; atmos_met.beat = 0; atmos_met.env = 0; atmos_met.bpm = 120; atmos_met.on = 1;
+        for (f = 0; f < 5u * 22050u && n < 8u; f += CTL) {
+            int32_t o[2 * CTL];
+            mix_block(o, CTL);
+            for (i = 0; i < CTL; i++) {
+                int32_t a = o[2 * i] < 0 ? -o[2 * i] : o[2 * i];
+                if (a > 1500 && quiet > 1000u) {
+                    first[n++] = f + i;
+                    if (n == 1u) peak_bar = a;
+                    if (n == 2u) peak_beat = a;
+                }
+                quiet = a > 1500 ? 0u : quiet + 1u;
+                if (n == 1u && a > peak_bar) peak_bar = a;
+                if (n == 2u && a > peak_beat) peak_beat = a;
+            }
+        }
+        bad += check("metronome on at 120: the clicks come 22050 samples apart", n >= 4u && first[1] - first[0] >= 22040u && first[1] - first[0] <= 22060u &&
+                     first[2] - first[1] >= 22040u && first[2] - first[1] <= 22060u);
+        bad += check("the bar's first click is stronger", peak_bar > peak_beat);
+        atmos_met.on = 0;
+    }
     printf("atmos_test: %s\n", bad ? "FAILED" : "all ok");
     return bad != 0;
 }

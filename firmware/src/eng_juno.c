@@ -166,7 +166,7 @@ static __attribute__((noinline)) void jn_render(track_t *t, voice_t *v, int32_t 
         vcf_s = fm106_vcf_process(&c->vcf, dco_s, dac_sl, a.res);
         vcf_s = fm106_dc_block(vcf_s, &c->dc_vcf);
         out_s = (int32_t)(((int64_t)vcf_s * c->vca_slew) >> 15);
-        g = m->amp0 + (int32_t)((int64_t)(m->amp1 - m->amp0) * (int64_t)i / (int64_t)n);   /* the part's ramp (fades) */
+        g = m->amp0 + (int32_t)(((int64_t)(m->amp1 - m->amp0) * (int64_t)i) >> CTL_LOG2);   /* the part's ramp (fades); n is CTL */
         out[i] += (int32_t)(((int64_t)out_s * g) >> 15) * 5 >> 4;   /* (the FM-106's voice sum is >> 4; x5 brings a voice to
                                                                       * the level of FM6 / PROPHET: measured, tests/juno_test.c) */
     }
