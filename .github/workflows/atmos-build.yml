@@ -1,12 +1,10 @@
 name: ATMOS build
 
 # Builds the dual-core firmware from the nightly branch and keeps the .fwsc as an Actions artifact.
-# It skips the host tests and the gh-pages publishing of nightly.yml: the tests compare the FM6 factory
-# sounds and the SEQ / ARP pages with stock Melodee, which ATMOS changes on purpose.
+# It skips the host tests and the gh-pages publishing of nightly.yml.
 #
-# v2: it writes a report on the run's SUMMARY page (errors and the last lines of each build log), so a failure can be
-# read without opening the logs; and if the build with the audio resident in SRAM fails, it builds again with the
-# audio in flash, so there is still a .fwsc to try in the emulator.
+# v2: it writes a report on the SUMMARY page of the run (errors and the last lines of each build log); and if the
+# build with the audio resident in SRAM fails, it builds again with the audio in flash.
 on:
   push:
     branches: [nightly]
@@ -50,7 +48,7 @@ jobs:
           fi
           test "$(git -C "$AC79_SDK" rev-parse HEAD)" = d179b4484759423312073f5fbb232501aa491047
 
-      - name: Build dual core, audio resident in SRAM (as the nightly does)
+      - name: Build dual core with the audio in SRAM
         id: ram
         continue-on-error: true
         env:
@@ -66,7 +64,7 @@ jobs:
           mkdir -p out/ram
           cp build/*.fwsc out/ram/
 
-      - name: Build dual core again, audio in flash (only when the first build failed)
+      - name: Build dual core with the audio in flash, only if the first build failed
         id: flash
         if: steps.ram.outcome != 'success'
         continue-on-error: true
@@ -82,7 +80,7 @@ jobs:
           mkdir -p out/flash
           cp build/*.fwsc out/flash/
 
-      - name: Report (shown on the run's summary page)
+      - name: Report on the summary page
         if: always()
         run: |
           {
@@ -94,11 +92,11 @@ jobs:
               if [ -f "$f" ]; then
                 echo
                 echo "### $f: lines that mention a problem, then the last lines"
-                echo '```'
+                echo '~~~'
                 grep -n -i -E "error|undefined|headroom|overflow|overlaps|calls XIP|must remain|escaped|budget|Unsupported|Traceback" "$f" | head -40 || true
                 echo '...'
                 tail -25 "$f"
-                echo '```'
+                echo '~~~'
               fi
             done
           } >> "$GITHUB_STEP_SUMMARY"
