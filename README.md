@@ -2,7 +2,7 @@
 
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-![Melodee 1.0.0: the Melodee logo and six firmware screens](docs/media/melodee-1.0.0.png)
+![Vintage Module 0.9: the Melodee logo and six firmware screens](docs/media/VintageModule.png)
 
 
 Custom firmware for the M-VAVE FM-1. This is a streamlined, "synth-only" modification focused entirely on pure sound design and live performance, removing all sequencing and arpeggiation clutter to optimize processing for the synthesizer engines.
