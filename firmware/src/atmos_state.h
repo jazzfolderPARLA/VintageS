@@ -33,7 +33,8 @@ typedef struct {
     uint8_t mode, split_point, bank, preset, b_bank, b_preset, last[ATMOS_NBANK];
 } atmos_t;
 
-static atmos_t atmos = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 0, 0, 0}};
+/* last[]: the first visit to a bank plays its first real sound (PROPHET and CZ-1 start with an INIT program at 0) */
+static atmos_t atmos = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1}};
 
 #define ATMOS_ROW      8u                /* favorites.factory[ATMOS_ROW] */
 #define ATMOS_DATA     2u
@@ -43,7 +44,7 @@ static const uint8_t ATMOS_TAG[4] = {'A', 'T', 'M', 1};
 /* row: favorites.factory[ATMOS_ROW] of the stored record. Each value is checked on its own. */
 static void atmos_load(const uint8_t *row)
 {
-    atmos_t a = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 0, 0, 0}};
+    atmos_t a = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1}};
     uint32_t tag_ok = 1;
     for (uint32_t i = 0; i < sizeof ATMOS_TAG; i++)
         if (row[ATMOS_TAGPOS + i] != ATMOS_TAG[i])
