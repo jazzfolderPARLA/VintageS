@@ -1,0 +1,94 @@
+name: VintageM release
+
+# Builds the final Vintage Module firmware (release identity, not the nightly one) and attaches it to a GitHub release.
+# How to use it: on GitHub open Releases > Draft a new release, create a tag called  vm-1.0  on the nightly branch
+# (or vm-1.1, vm-1.0.1 ...), and publish. The tag starts this workflow; the version is what follows "vm-".
+on:
+  push:
+    tags: ['vm-*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      JIELI_TOOLCHAIN: ${{ github.workspace }}/.nightly-deps/jieli/toolchain
+      AC79_SDK: ${{ github.workspace }}/.nightly-deps/sdk
+      PARALLEL: '2'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libharfbuzz-dev libfribidi-dev libraqm-dev
+          python -m pip install Pillow fonttools
+
+      - uses: actions/cache@v4
+        with:
+          path: .nightly-deps
+          key: jieli-linux-sdk-d179b448-v1
+
+      - name: Fetch pinned SDK and toolchain
+        run: |
+          if [ ! -x "$JIELI_TOOLCHAIN/pi32v2/bin/clang" ]; then
+            tools/get_toolchain.sh "$GITHUB_WORKSPACE/.nightly-deps/jieli"
+          fi
+          if [ ! -d "$AC79_SDK/.git" ]; then
+            git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$AC79_SDK"
+          fi
+          test "$(git -C "$AC79_SDK" rev-parse HEAD)" = d179b4484759423312073f5fbb232501aa491047
+
+      - name: Work out the version from the tag
+        id: ver
+        run: |
+          VERSION="${GITHUB_REF_NAME#vm-}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Build the release, dual core, audio in SRAM
+        env:
+          MELODEE_DUAL_CORE: '1'
+          MELODEE_RAM_AUDIO: '1'
+        run: |
+          set -o pipefail
+          ./build.sh --release "${{ steps.ver.outputs.version }}-vm" 2>&1 | tee build-release.log
+
+      - name: Collect the files
+        run: |
+          mkdir -p out
+          cp build/melodee-*.fwsc "out/VintageM-${{ steps.ver.outputs.version }}.fwsc"
+          cp -r build/release-* out/ || true
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VintageM-${{ steps.ver.outputs.version }}
+          path: out/**
+          if-no-files-found: error
+
+      - name: Attach the firmware to the GitHub release
+        continue-on-error: true
+        run: gh release upload "$GITHUB_REF_NAME" "out/VintageM-${{ steps.ver.outputs.version }}.fwsc" --clobber
+
+      - name: Report on the summary page
+        if: always()
+        run: |
+          {
+            echo '## VintageM release report'
+            echo
+            echo "tag: $GITHUB_REF_NAME"
+            echo '~~~'
+            grep -n -i -E "error|undefined|headroom|overflow|overlaps|calls XIP|Traceback|identity|package " build-release.log | head -30 || true
+            echo '...'
+            tail -15 build-release.log
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
