@@ -57,10 +57,12 @@ int main(void)
     audio(300);                                              /* (the switched engines settle with the audio running) */
     key_down(7); audio(500);
     press(B_PLAY); frames(100); audio(300); frames(50);      snap("PLAY (toque): monitor con la onda, el vumetro, el banco y la estrella.");
-    hold(B_PLAY); audio(400);                                snap("PLAY (largo): metronomo (BPM en la cabecera; el LED de PLAY late).");
-    turn(EN_ALGO, 1); turn(EN_ALGO, 1); turn(EN_ALGO, 1); frames(100);
-                                                             snap("Encoder ALGORITHM: el tempo del metronomo.");
-    press(B_PLAY); frames(300);                              snap("PLAY (toque) con el metronomo: lo apaga.");
+    hold(B_PLAY); frames(300);                               snap("PLAY (largo): PANIC, todas las notas apagadas.");
+    press(B_PLAY); frames(300);                              /* back to the sounds */
+    press(B_SEQ); press(B_SEQ); frames(400);                 snap("SEQ dos toques: modo SPLIT (aparece el punto de split).");
+    turn(EN_ALGO, 1); turn(EN_ALGO, 1); turn(EN_ALGO, 1); frames(400);
+                                                             snap("Encoder ALGORITHM: mueve el punto de split de semitono en semitono.");
+    press(B_SEQ); frames(300);                               snap("SEQ (toque): otra vez SINGLE.");
     key_up(7);
     fclose(capf);
     printf("storyboard: %u pantallas\n", (unsigned)nsnap);

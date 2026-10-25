@@ -769,7 +769,7 @@ static void stage_draw(void)
     stage_knobs();
     if (!ui.force && (ui.frame & 1u))
         return;
-    if (atmos_met.view == 1u) {                         /* PLAY: the monitor takes the whole Stage */
+    if (atmos_view == 1u) {                         /* PLAY: the monitor takes the whole Stage */
         stage_monitor();
         return;
     }

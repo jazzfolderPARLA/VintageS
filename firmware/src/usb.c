@@ -139,8 +139,8 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
 #if MELODEE_USB_AUDIO
 #include "usb_audio_stream.c"
 #define CFG_LEN 411
-static const uint8_t DEV_DESC[18] = {18, 1, 0x00, 0x02, 0xEF, 0x02, 0x01, 64, 0x09, 0x12, 0x01, 0x00, 0x06, 0x03,
-                                     1, 2, 0, 1};        /* misc/IAD, bcdDevice 3.06: native 44.1 kHz only */
+static const uint8_t DEV_DESC[18] = {18, 1, 0x00, 0x02, 0xEF, 0x02, 0x01, 64, 0x09, 0x12, 0x01, 0x00, 0x07, 0x03,
+                                     1, 2, 0, 1};        /* misc/IAD, bcdDevice 3.07 (ATMOS: new names, hosts cache by version): native 44.1 kHz only */
 static const uint8_t CFG_DESC[] = {
     9, 2, 0x9B, 0x01, 6, 1, 0, 0x80, 50,                /* 411 bytes, six interfaces */
     8, 0x0B, 0, 2, 1, 1, 0, 0,                          /* IAD: MIDI (IF 0-1) */
@@ -198,12 +198,12 @@ static const uint8_t STR1[] = {26, 3, 'E', 0, 'l', 0, 'l', 0, 'i', 0, 'c', 0, ' 
 static const uint8_t STR2[] = {30, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0, 'U', 0, 'p', 0,
                                'd', 0, 'a', 0, 't', 0, 'e', 0};
 #else
-static const uint8_t STR2[] = {16, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0};
+static const uint8_t STR2[] = {18, 3, 'V', 0, 'i', 0, 'n', 0, 't', 0, 'a', 0, 'g', 0, 'e', 0, 'M', 0};   /* ATMOS: VintageM */
 #endif
 #if MELODEE_USB_AUDIO                                   /* the audio functions: host device names */
-static const uint8_t STR3[] = {24, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0, 'O', 0, 'u', 0,
-                               't', 0};
-static const uint8_t STR4[] = {22, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0, 'I', 0, 'n', 0};
+static const uint8_t STR3[] = {26, 3, 'V', 0, 'i', 0, 'n', 0, 't', 0, 'a', 0, 'g', 0, 'e', 0, 'M', 0, ' ', 0, 'O', 0, 'u', 0,
+                               't', 0};   /* ATMOS: VintageM Out */
+static const uint8_t STR4[] = {24, 3, 'V', 0, 'i', 0, 'n', 0, 't', 0, 'a', 0, 'g', 0, 'e', 0, 'M', 0, ' ', 0, 'I', 0, 'n', 0};   /* VintageM In */
 static uint8_t ua_cfg[sizeof CFG_DESC];                 /* the configuration as sent (usb_audio.c ua_cfg_build) */
 static uint16_t ua_cfg_len;
 #endif

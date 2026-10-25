@@ -225,7 +225,7 @@ static void draw_head(void)
     char b[16], chip[16];
     int32_t x;
     uint32_t low = !(usb.config && !usb.suspended) && batt_level() <= 1, msg = ui.msg_t || ui.layer;
-    uint32_t sig, moved = 0, lit[2], mf = 0;
+    uint32_t sig, moved = 0, lit[2];
     int16_t bpm = song.g[G_BPM];                        /* (read once: what is noted is what is drawn) */
     head_chip_text(chip);
     {   /* ATMOS: MIDI activity, USB then TRS: a dot stays lit 90 ms after a message arrives */
@@ -241,20 +241,10 @@ static void draw_head(void)
             lit[i] = act_ms[i] && fm1_ms - (act_ms[i] & ~1u) < 90u;
         }
     }
-    {   /* ATMOS: the metronome's beat flashes its dot for 70 ms */
-        static uint32_t mn, mms;
-        uint32_t tk = atmos_met.tick;
-        if (tk != mn) {
-            mn = tk;
-            mms = fm1_ms | 1u;
-        }
-        mf = atmos_met.on && mms && fm1_ms - (mms & ~1u) < 70u;
-    }
     sig = (uint32_t)seq_erase_active(TSEL) * 8191u + (uint32_t)song.playing * 3u + song.rec * 5u + song.rec_wait * 65537u + (uint32_t)(song.octave + 8) * 11u +
           song.sel * 13131u + (msg ? str_hash(7u, ui.msg_t ? ui.msg : layer_head()) : str_hash(5u, chip)) +
           (ui.bpm_t != 0) * 31u + low * 7777u + (chain.running ? (chain.row + 1u) * 104729u : 0u) + ux.gen * 977u +
-          (ui.home ? 0u : ui.page * 2654435761u) + page_sheet() * 524287u + lit[0] * 17u + lit[1] * 19u +
-          (uint32_t)atmos_met.on * 7u + (uint32_t)atmos_met.bpm * 13u + mf * 29u;
+          (ui.home ? 0u : ui.page * 2654435761u) + page_sheet() * 524287u + lit[0] * 17u + lit[1] * 19u;
     if (bpm != ui.roll_bpm) {
         char a[8];
         fmt_int(a, ui.roll_bpm);
@@ -275,13 +265,6 @@ static void draw_head(void)
     cv_circle(52, H_HEAD / 2, 7, lit[1] ? T_THEME : T_LINE, T_BG);
     cv_text_on(59, 4, &AF_X, "TRS", lit[1] ? T_TEXT : T_MID, T_BG);
     x = 82;
-    if (atmos_met.on) {                                 /* the metronome: a dot on the beat and the tempo */
-        char mb[8];
-        fmt_int(mb, (int32_t)atmos_met.bpm);
-        cv_circle(88, H_HEAD / 2, 7, mf ? T_THEME : T_LINE, T_BG);
-        cv_text_on(95, 4, &AF_X, mb, T_TEXT, T_BG);
-        x = 122;
-    }
     if (seq_erase_active(TSEL)) {
         cv_text_r(232, 3, &AF_S, "ERASING", T_REC, T_BG);
     } else if (msg) {                                   /* a message, or the layer's name (may hold a keycap) */

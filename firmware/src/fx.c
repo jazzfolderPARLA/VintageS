@@ -350,7 +350,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
      * Keep this work at FS/8: no additional delay memory or synth-rate DSP. */
     int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo,difference=f->damp[0],low=f->damp[1];
     uint32_t phase=f->decim;
-    int32_t mix=f->mix,tone=166+f->character*80/127,level=724+f->character*3;
+    int32_t mix=f->mix,tone=166+f->character*80/127,level=(724+f->character*3)*2;                /* x2: the input gives up 6 dB, the wet return keeps its level */
     for(uint32_t i=0;i<n;i++){
         int32_t mono=fx_div_pow2(fx_left[i]+fx_right[i],1);
         a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);
@@ -364,7 +364,10 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
             input+=fx_div_pow2(input-previous_input,2);
             int32_t v[8],x;uint32_t off=0;
             f->rev_dc+=((float)input-f->rev_dc)*0.006f;
-            x=fx_limit(fx_div_pow2((int32_t)((float)input-f->rev_dc),2),-16000,16000);
+            /* ATMOS: one more bit of headroom at the input (the wet gain below makes it up): loud chords from the DX7 ROM and
+             * Juno voices went past the +-16000 clamp up to 10% of the time, and a hard clamp in front of the tail is what
+             * sounded ugly; now the clamp is out of reach of normal playing. */
+            x=fx_limit(fx_div_pow2((int32_t)((float)input-f->rev_dc),3),-16000,16000);
             off=1610u;
             for(uint32_t k=0;k<4u;k++){x=fx_reverb_ap(f,mem,k,x,off);off+=REV_AP_LEN[k];}
             off=0;int32_t sum=0;

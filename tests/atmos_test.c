@@ -106,64 +106,48 @@ int main(void)
         bad += check("a USB note-on is counted (the header's MIDI dot)", midi_rx_usb == before + 1u);
     }
 
-    /* PLAY: the view (tap), the metronome (held), its tempo on ALGORITHM, SELECT untouched */
+    /* PLAY: the view (tap) and PANIC (held); ALGORITHM moves the split point (SPLIT only); SELECT untouched */
     go_home();
-    atmos_met.view = 0;
-    press(B_PLAY);  bad += check("PLAY tap: the monitor", atmos_met.view == 1 && ui.home);
-    press(B_PLAY);  bad += check("PLAY tap: back to the sounds", atmos_met.view == 0);
+    atmos_view = 0;
+    press(B_PLAY);  bad += check("PLAY tap: the monitor", atmos_view == 1 && ui.home);
+    press(B_PLAY);  bad += check("PLAY tap: back to the sounds", atmos_view == 0);
     press(B_PLAY);  press(B_PLAY);
-    bad += check("PLAY taps: two views only (monitor, sounds)", atmos_met.view == 0);
+    bad += check("PLAY taps: two views only (monitor, sounds)", atmos_view == 0);
     bad += check("VU: silence is level 0, full scale 20, -6 dB 18, -30 dB 10",
                  atmos_vu_level(0) == 0 && atmos_vu_level(32767) == 20 && atmos_vu_level(16422) == 18 && atmos_vu_level(1036) == 10);
-    bad += check("the metronome starts off, at 120", !atmos_met.on && atmos_met.bpm == 120);
-    hold(B_PLAY);   bad += check("PLAY held: the metronome on", atmos_met.on == 1);
-    turn(EN_ALGO, 1);  turn(EN_ALGO, 1);
-    bad += check("ALGORITHM: the tempo (120 -> 122)", atmos_met.bpm == 122);
-    turn(EN_ALGO, -1);
-    bad += check("ALGORITHM the other way (121)", atmos_met.bpm == 121);
-    {   uint16_t b0 = atmos_met.bpm;
-        turn(EN_SELECT, 1);
-        bad += check("SELECT does not touch the tempo", atmos_met.bpm == b0);
+    {   uint32_t f, q, n;
+        atmos.mode = ATMOS_SINGLE;
+        for (f = 0; f < 4000u; f += CTL) { int32_t o[2 * CTL]; mix_block(o, CTL); }
+        midi_event(0x90, 0, 60, 100); midi_event(0x90, 0, 64, 100); midi_event(0xB0, 0, 64, 127);   /* two notes and the sustain pedal */
+        for (f = 0; f < 4000u; f += CTL) { int32_t o[2 * CTL]; mix_block(o, CTL); }
+        n = 0; for (q = 0; q < NVOICE; q++) n += trk[0].v[q].active;
+        bad += check("two MIDI notes sound before PANIC", n >= 2u && mn_get(0, 60) && mn_get(0, 64));
+        hold(B_PLAY);
+        for (f = 0; f < 8000u; f += CTL) { int32_t o[2 * CTL]; mix_block(o, CTL); }
+        bad += check("PLAY held: PANIC - no MIDI note left owned, nothing with its key down", !mn_get(0, 60) && !mn_get(0, 64) && gates() == 0);
+        midi_event(0x80, 0, 60, 0); midi_event(0x80, 0, 64, 0); midi_event(0xB0, 0, 64, 0);
+        n = 0; for (q = 0; q < 6000u; q += CTL) { int32_t o[2 * CTL]; mix_block(o, CTL); }
+        midi_event(0x90, 0, 67, 100);
+        for (f = 0; f < 4000u; f += CTL) { int32_t o[2 * CTL]; mix_block(o, CTL); }
+        bad += check("after PANIC the instrument plays again", mn_get(0, 67) != 0 && gates() >= 1u);
+        midi_event(0x80, 0, 67, 0);
     }
-    for (k = 0; k < 400; k++) turn(EN_ALGO, 1);
-    bad += check("the tempo stops at 250", atmos_met.bpm == 250);
-    for (k = 0; k < 400; k++) turn(EN_ALGO, -1);
-    bad += check("... and at 30", atmos_met.bpm == 30);
-    atmos_met.bpm = 120;
-    press(B_PLAY);  bad += check("PLAY tap with the metronome on: it stops (no view change)", !atmos_met.on && atmos_met.view == 0);
+    atmos.mode = ATMOS_SINGLE; atmos.split_point = 60;
     turn(EN_ALGO, 1);
-    bad += check("ALGORITHM with the metronome off: nothing", atmos_met.bpm == 120);
-
-    /* the click, in the audio: one every 22050 samples at 120 bpm, the first one stronger, nothing when off */
-    {   uint32_t f, i, n = 0, first[8], quiet = 2000;
-        int32_t peak_bar = 0, peak_beat = 0, silent_peak = 0;
-        atmos_met.on = 0;
-        for (f = 0; f < 4096; f += CTL) {
-            int32_t o[2 * CTL];
-            mix_block(o, CTL);
-            for (i = 0; i < CTL; i++) { int32_t a = o[2 * i] < 0 ? -o[2 * i] : o[2 * i]; if (a > silent_peak) silent_peak = a; }
-        }
-        bad += check("metronome off: no click in the audio", silent_peak == 0);
-        atmos_met.pos = 0; atmos_met.beat = 0; atmos_met.env = 0; atmos_met.bpm = 120; atmos_met.on = 1;
-        for (f = 0; f < 5u * 22050u && n < 8u; f += CTL) {
-            int32_t o[2 * CTL];
-            mix_block(o, CTL);
-            for (i = 0; i < CTL; i++) {
-                int32_t a = o[2 * i] < 0 ? -o[2 * i] : o[2 * i];
-                if (a > 1500 && quiet > 1000u) {
-                    first[n++] = f + i;
-                    if (n == 1u) peak_bar = a;
-                    if (n == 2u) peak_beat = a;
-                }
-                quiet = a > 1500 ? 0u : quiet + 1u;
-                if (n == 1u && a > peak_bar) peak_bar = a;
-                if (n == 2u && a > peak_beat) peak_beat = a;
-            }
-        }
-        bad += check("metronome on at 120: the clicks come 22050 samples apart", n >= 4u && first[1] - first[0] >= 22040u && first[1] - first[0] <= 22060u &&
-                     first[2] - first[1] >= 22040u && first[2] - first[1] <= 22060u);
-        bad += check("the bar's first click is stronger", peak_bar > peak_beat);
-        atmos_met.on = 0;
+    bad += check("ALGORITHM does nothing outside SPLIT", atmos.split_point == 60);
+    atmos.mode = ATMOS_SPLIT; atmos.split_point = 60;
+    turn(EN_ALGO, 1); turn(EN_ALGO, 1); turn(EN_ALGO, 1);
+    bad += check("SPLIT: ALGORITHM moves the split point up a semitone a click (60 -> 63)", atmos.split_point == 63);
+    turn(EN_ALGO, -1);
+    bad += check("... and down (62)", atmos.split_point == 62);
+    for (k = 0; k < 300; k++) turn(EN_ALGO, 1);
+    bad += check("the split point stops at 127", atmos.split_point == 127);
+    for (k = 0; k < 300; k++) turn(EN_ALGO, -1);
+    bad += check("... and at 0", atmos.split_point == 0);
+    atmos.split_point = 60;
+    {   uint32_t sel_before = atmos.split_point;
+        turn(EN_SELECT, 1);
+        bad += check("SELECT does not touch the split point", atmos.split_point == sel_before);
     }
     printf("atmos_test: %s\n", bad ? "FAILED" : "all ok");
     return bad != 0;

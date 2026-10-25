@@ -132,6 +132,7 @@ static uint32_t pattern_leds(uint32_t *dim, uint32_t *breath)
             m |= 1u << k;
     return m;
 }
+static void atmos_split_say(void);                      /* below */
 static void pattern_keys(uint32_t notes)
 {   /* ATMOS: SEQ held + a key: that key's note is the new split point and the mode becomes SPLIT (notes below it
      * play layer B). Its release is then no SEQ tap (no mode change). */
@@ -146,11 +147,7 @@ static void pattern_keys(uint32_t notes)
             ui.seq_t0 |= 2u;
             atmos.split_point = (uint8_t)n;
             atmos.mode = ATMOS_SPLIT;
-            {   char m[12] = "SPLIT ";
-                m[6] = (char)('0' + (n / 100u) % 10u); m[7] = (char)('0' + (n / 10u) % 10u); m[8] = (char)('0' + n % 10u); m[9] = 0;
-                if (m[6] == '0') { m[6] = m[7]; m[7] = m[8]; m[8] = 0; if (m[6] == '0') { m[6] = m[7]; m[7] = 0; } }
-                ui_message(m);
-            }
+            atmos_split_say();
             settings_save();                            /* the split point is kept; the mode is not */
             ui.force = 1;
             break;
@@ -205,15 +202,7 @@ static void ui_leds(void)
             on = beat_ms >= 2u ? (fm1_ms % beat_ms) < beat_ms / 2u : 1u;
         led_set(nl, panel.btn[B_SEQ], (int)on);
     }
-    {   /* ATMOS: the PLAY LED: flashes on every beat of the metronome; else lit while the keyboard / scope view is up */
-        static uint32_t beat_n, beat_ms;
-        uint32_t tk = atmos_met.tick;
-        if (tk != beat_n) {
-            beat_n = tk;
-            beat_ms = fm1_ms | 1u;
-        }
-        led_set(nl, panel.btn[B_PLAY], atmos_met.on ? (beat_ms && fm1_ms - (beat_ms & ~1u) < 70u) : atmos_met.view != 0u);
-    }
+    led_set(nl, panel.btn[B_PLAY], atmos_view != 0u);        /* ATMOS: PLAY lit while the monitor is up */
     led_put(nl, panel.btn[B_REC], preset_favorite());                 /* ATMOS: REC lit = the sound is a favourite, */
     led_put(nw, panel.btn[B_REC], list_mode() == LM_FAV);            /* breathing = in the favourites view */
     k = oct_leds();
@@ -1504,46 +1493,39 @@ static void atmos_b_bank_next(void)
     ui_say("LAYER B ", atmos_bank_word(b));
 }
 
-/* ATMOS PLAY: tap = the next view (the sounds / the monitor; with the metronome on: it stops), held = the
- * metronome on / off. Its tempo is the ALGORITHM encoder's while it runs (the tracks are fixed, it had nothing left to do);
- * SELECT is untouched. */
-static void atmos_met_set(int on)
-{
-    char b[8];
-    if (on) {
-        atmos_met.pos = 0;
-        atmos_met.beat = 0;
-        atmos_met.env = 0;
-    }
-    atmos_met.per = (uint32_t)FS * 60u / (uint32_t)atmos_met.bpm;
-    atmos_met.on = (uint8_t)on;
-    if (on) {
-        fmt_int(b, (int32_t)atmos_met.bpm);
-        ui_say("METRONOME ", b);
-    } else {
-        ui_message("METRONOME OFF");
-    }
-    ui.force = 1;
-}
-static void atmos_met_bpm(int32_t s)
-{
-    int32_t v = (int32_t)atmos_met.bpm + s;
-    char b[8];
-    v = v < (int32_t)ATMOS_BPM_MIN ? (int32_t)ATMOS_BPM_MIN : v > (int32_t)ATMOS_BPM_MAX ? (int32_t)ATMOS_BPM_MAX : v;
-    atmos_met.bpm = (uint16_t)v;
-    atmos_met.per = (uint32_t)FS * 60u / (uint32_t)v;
-    fmt_int(b, v);
-    ui_say("BPM ", b);
-    ui.force = 1;
-}
+/* ATMOS PLAY: tap = the next view (the sounds / the monitor), held = PANIC (every note off). */
 static void atmos_view_next(void)
 {
     static const char *const NAME[ATMOS_VIEW_N] = {"SOUNDS", "MONITOR"};
     if (!ui.home)
         go_home();
-    atmos_met.view = (uint8_t)((atmos_met.view + 1u) % ATMOS_VIEW_N);
-    ui_message(NAME[atmos_met.view]);
+    atmos_view = (uint8_t)((atmos_view + 1u) % ATMOS_VIEW_N);
+    ui_message(NAME[atmos_view]);
     ui.force = 1;
+}
+static void atmos_panic(void)
+{
+    midi_in_overflow = 1;                               /* the whole MIDI reset: queue, channels, owners, chords, sustain */
+    panic_req = (uint8_t)((1u << NTRK) - 1u);           /* and every track lets go of what sounds, at once */
+    ui_message("PANIC  ALL NOTES OFF");
+    ui.force = 1;
+}
+/* in SPLIT the ALGORITHM encoder moves the split point a semitone (the tracks are fixed, it had nothing left to do) */
+static void atmos_split_say(void)
+{
+    char n[6], m[16];
+    stage_note_name(n, atmos.split_point);
+    str_cpy(m, "SPLIT ", 8);
+    str_cpy(m + 6, n, 6);
+    ui_message(m);
+}
+static void atmos_split_step(int32_t s)
+{
+    int32_t v = (int32_t)atmos.split_point + (s > 0 ? 1 : -1);
+    atmos.split_point = (uint8_t)(v < 0 ? 0 : v > 127 ? 127 : v);
+    atmos_split_say();
+    ui.force = 1;
+    settings_save();
 }
 
 /* the quick layers: ui_layer.c (included after this file) */
@@ -2042,7 +2024,10 @@ static void ui_input(void)
         layer_tap(lytap);
     if (seq == BT_TAP) {                                /* ATMOS: SEQ tap: SINGLE -> DUAL -> SPLIT -> SINGLE */
         atmos_mode_next();
-        ui_message(atmos.mode == ATMOS_DUAL ? "DUAL LAYER" : atmos.mode == ATMOS_SPLIT ? "SPLIT" : "SINGLE");
+        if (atmos.mode == ATMOS_SPLIT)
+            atmos_split_say();                          /* SPLIT and the split point (the ALGORITHM encoder moves it) */
+        else
+            ui_message(atmos.mode == ATMOS_DUAL ? "DUAL LAYER" : "SINGLE");
         ui.force = 1;
     }                                                   /* (SEQ held: its keys set the split point, above) */
     if (arp == BT_TAP && ((fm1_in.buttons >> panel.btn[B_SEQ]) & 1u)) {   /* SEQ held + ARP: layer B's bank */
@@ -2052,14 +2037,10 @@ static void ui_input(void)
         atmos_bank_next();
     else if (arp == BT_HOLD)                            /* ARP held: the list of sounds */
         atmos_open_list();
-    if (play == BT_TAP) {                               /* ATMOS: PLAY tap: the next view; with the metronome on, it stops */
-        if (atmos_met.on)
-            atmos_met_set(0);
-        else
-            atmos_view_next();
-    } else if (play == BT_HOLD) {                       /* PLAY held: the metronome, on / off */
-        atmos_met_set(!atmos_met.on);
-    }
+    if (play == BT_TAP)                                 /* ATMOS: PLAY tap: the next view */
+        atmos_view_next();
+    else if (play == BT_HOLD)                           /* PLAY held: PANIC */
+        atmos_panic();
     if (home == BT_TAP)                                 /* HOME acts on release: a hold opens the menu */
         go_home();
     cursor_fix();                                       /* LEN may have changed (knob, editor, load) */
@@ -2232,9 +2213,9 @@ static void ui_input(void)
         fm6_opsel = (uint8_t)clamp((int32_t)fm6_opsel + (s > 0 ? 1 : -1), 0, 5);
         ui.force = 1;
     }
-    if ((s = panel_enc(EN_ALGO)) != 0) {           /* ATMOS: ALGORITHM is the metronome's tempo while it runs (the tracks are fixed) */
-        if (atmos_met.on)
-            atmos_met_bpm(s);
+    if ((s = panel_enc(EN_ALGO)) != 0) {           /* ATMOS: ALGORITHM moves the split point (SPLIT mode only) */
+        if (atmos.mode == ATMOS_SPLIT)
+            atmos_split_step(s);
     }
     if ((s = panel_enc(EN_SELECT)) != 0) {          /* SELECT: pages; with SEQ / a step key / ENV / SCL: below */
         step_edit_combo();
