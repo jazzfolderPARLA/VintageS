@@ -138,7 +138,8 @@ static struct {
     uint8_t act;                 /* action pages: the column whose action OCT+ does, + 1; 0 = none (act_col) */
     uint32_t rec_t0;             /* REC press time (transport only) */
     uint32_t seq_t0;             /* SEQ held: direct SONG entry */
-    uint32_t arp_t0;             /* ATMOS: ARP press time (btn_hold: tap = next bank, held = the sound list) */
+    uint32_t arp_t0;             /* ATMOS: ARP press time (btn_hold: tap = arpeggiator on / off, held = its page) */
+    uint32_t scl_t0;             /* ATMOS: SCL press time (btn_hold: tap = next bank, held = the sound list) */
     uint32_t play_t0;            /* ATMOS: PLAY press time (btn_hold: tap = the view / metronome off, held = the metronome) */
     uint32_t save_t0;            /* SAVE press time (btn_hold: held = project quick save) */
     uint32_t edit_t0;            /* EDIT press time (btn_hold: held = UNDO) */
@@ -198,7 +199,7 @@ static uint32_t drum_hit_selected(void);
 static const page_t *cur_page(void) { return page_over ? page_over : &PAGES[ui.page]; }
 
 /* the quick layers (ui_layer.c): a button held, the keys and KNOB 1..4 are its shortcuts, its map over the page */
-enum { LAYER_NONE, LAYER_RESERVED, LAYER_GLO, LAYER_SCL, LAYER_N };
+enum { LAYER_NONE, LAYER_RESERVED, LAYER_GLO, LAYER_N, LAYER_SCL = 255 };   /* ATMOS: the SCL layer (root, scale, chord) is gone; SCL is the bank button */
 static void draw_layer(void);
 static const char *layer_head(void);
 static uint32_t layer_leds(void);

@@ -1493,6 +1493,25 @@ static void atmos_b_bank_next(void)
     ui_say("LAYER B ", atmos_bank_word(b));
 }
 
+/* ATMOS ARP: tap = the arpeggiator on / off (the native one, seq.c: arp_tick; its REPEAT mode, the beat LED); held = its page.
+ * It acts on layer A and, in DUAL / SPLIT, on layer B too; coming back on it uses the mode it had (UP at first). */
+static uint8_t atmos_arp_last = 1;
+static void atmos_arp_toggle(void)
+{
+    uint32_t ka = song.sel % NTRK, kb = atmos_b_track(ka, NTRK);
+    int16_t cur = trk[ka].p[P_AMODE], nv;
+    if (cur) {
+        atmos_arp_last = (uint8_t)cur;
+        nv = 0;
+    } else {
+        nv = (int16_t)(atmos_arp_last ? atmos_arp_last : 1u);
+    }
+    trk[ka].p[P_AMODE] = nv;
+    if (atmos.mode != ATMOS_SINGLE)
+        trk[kb].p[P_AMODE] = nv;
+    ui_say("ARP ", nv ? N_AMODE[nv % 7] : "OFF");
+    ui.force = 1;
+}
 /* ATMOS PLAY: tap = the next view (the sounds / the monitor), held = PANIC (every note off). */
 static void atmos_view_next(void)
 {
@@ -1547,6 +1566,8 @@ static uint32_t ly_bit(uint32_t l);
 /* a page button let go (they act on release; a layer's own button: layer_gesture) */
 static void page_tap(uint32_t b)
 {
+    if (b == B_SCL)                                     /* ATMOS: SCL is the bank button: it opens no page (see atmos_bank_next) */
+        return;
     uint32_t f;
     if (b == B_EDIT && ui.erase_gesture) return;
     if (b == B_EDIT && smap.on) {                       /* the map open: EDIT closes it */
@@ -1815,7 +1836,8 @@ static void ui_input(void)
         ui.force = 1;
     }
     uint32_t seq = btn_hold(&ui.seq_t0, B_SEQ, now, !ui.menu && !ui.confirm);
-    uint32_t arp = btn_hold(&ui.arp_t0, B_ARP, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = bank, held = list */
+    uint32_t arp = btn_hold(&ui.arp_t0, B_ARP, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = arpeggiator on / off, held = its page */
+    uint32_t scl = btn_hold(&ui.scl_t0, B_SCL, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = bank, held = the sound list */
     uint32_t play = btn_hold(&ui.play_t0, B_PLAY, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = view, held = metronome */
     uint32_t save = btn_hold(&ui.save_t0, B_SAVE, now, !ui.menu && !ui.confirm);
     uint32_t edit = btn_hold(&ui.edit_t0, B_EDIT, now, !ui.menu && !ui.confirm && !name_on() && !new_on() && !ui.ly);
@@ -1894,6 +1916,8 @@ static void ui_input(void)
             ui.seq_t0 |= 2u;
         if (pressed & (1u << panel.btn[B_ARP]))
             ui.arp_t0 |= 2u;
+        if (pressed & (1u << panel.btn[B_SCL]))
+            ui.scl_t0 |= 2u;
         if (pressed & (1u << panel.btn[B_PLAY]))
             ui.play_t0 |= 2u;
         s=panel_enc(EN_PRESET);
@@ -2030,13 +2054,17 @@ static void ui_input(void)
             ui_message(atmos.mode == ATMOS_DUAL ? "DUAL LAYER" : "SINGLE");
         ui.force = 1;
     }                                                   /* (SEQ held: its keys set the split point, above) */
-    if (arp == BT_TAP && ((fm1_in.buttons >> panel.btn[B_SEQ]) & 1u)) {   /* SEQ held + ARP: layer B's bank */
+    if (scl == BT_TAP && ((fm1_in.buttons >> panel.btn[B_SEQ]) & 1u)) {   /* SEQ held + SCL: layer B's bank */
         ui.seq_t0 |= 2u;
         atmos_b_bank_next();
-    } else if (arp == BT_TAP)                           /* ATMOS: ARP tap: bank A -> B -> C -> D */
+    } else if (scl == BT_TAP)                           /* ATMOS: SCL tap: bank A -> B -> C -> D */
         atmos_bank_next();
-    else if (arp == BT_HOLD)                            /* ARP held: the list of sounds */
+    else if (scl == BT_HOLD)                            /* SCL held: the list of sounds */
         atmos_open_list();
+    if (arp == BT_TAP)                                  /* ATMOS: ARP tap: the arpeggiator on / off */
+        atmos_arp_toggle();
+    else if (arp == BT_HOLD)                            /* ARP held: its page (mode, rate, octaves, gate) */
+        open_family(FAM_ARP);
     if (play == BT_TAP)                                 /* ATMOS: PLAY tap: the next view */
         atmos_view_next();
     else if (play == BT_HOLD)                           /* PLAY held: PANIC */
@@ -2066,7 +2094,7 @@ static void ui_input(void)
         case B_PLAY:                                    /* ATMOS: tap / hold: above (view, metronome) */
             break;
         case B_SEQ:
-        case B_ARP:                                     /* ATMOS: tap / hold: above (no ARP page) */
+        case B_ARP:                                     /* ATMOS: tap / hold: above (arpeggiator, its page) */
         case B_REC:                                     /* tap / hold: above */
         case B_SAVE:
         case B_GLO:

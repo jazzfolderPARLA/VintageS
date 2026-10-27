@@ -12,11 +12,11 @@ int main(void)
 
     /* ARP: the banks A B C D, each coming back to the sound it had */
     engine_load_of(TSEL, ENGI_FM6, 5);
-    press(B_ARP);  bad += check("ARP tap: A (FM6) -> B (PROPHET)", TSEL->eng_req == ENGI_PROPHET);
-    press(B_ARP);  bad += check("ARP tap: B -> C (JUNO)", TSEL->eng_req == ENGI_JUNO);
-    press(B_ARP);  bad += check("ARP tap: C -> D (CZ)", TSEL->eng_req == ENGI_CZ);
-    press(B_ARP);  bad += check("ARP tap: D -> A, on the sound it left (6th)", TSEL->eng_req == ENGI_FM6 && TSEL->preset == 5);
-    hold(B_ARP);   bad += check("ARP held: the PRESETS list", cur_page()->graph == GR_BROWSE && !ui.home);
+    press(B_SCL);  bad += check("SCL tap: A (FM6) -> B (PROPHET)", TSEL->eng_req == ENGI_PROPHET);
+    press(B_SCL);  bad += check("SCL tap: B -> C (JUNO)", TSEL->eng_req == ENGI_JUNO);
+    press(B_SCL);  bad += check("SCL tap: C -> D (CZ)", TSEL->eng_req == ENGI_CZ);
+    press(B_SCL);  bad += check("SCL tap: D -> A, on the sound it left (6th)", TSEL->eng_req == ENGI_FM6 && TSEL->preset == 5);
+    hold(B_SCL);   bad += check("SCL held: the PRESETS list", cur_page()->graph == GR_BROWSE && !ui.home);
     go_home();
 
     /* REC: the favourites */
@@ -48,8 +48,8 @@ int main(void)
     bad += check("SEQ + PRESETS: layer B's sound steps (0 -> 1), A untouched", trk[kb].eng_req == ENGI_FM6 && trk[kb].preset == 1 && TSEL->preset == 7);
     turn(EN_PRESET, -1); turn(EN_PRESET, -1); frame();
     bad += check("SEQ + PRESETS the other way: 0, then the INIT VOICE (the list wraps)", trk[kb].preset == 128);
-    press(B_ARP);
-    bad += check("SEQ + ARP: layer B's bank (A -> B, PROPHET)", trk[kb].eng_req == ENGI_PROPHET);
+    press(B_SCL);
+    bad += check("SEQ + SCL: layer B's bank (A -> B, PROPHET)", trk[kb].eng_req == ENGI_PROPHET);
     btn_up(B_SEQ); frames(100);
     bad += check("no SEQ tap on release (the mode stays SINGLE)", atmos.mode == ATMOS_SINGLE);
 
@@ -59,6 +59,26 @@ int main(void)
     k = kb_map(TSEL, 5);
     btn_up(B_SEQ); frames(100);
     bad += check("SEQ + a key: SPLIT at that note", atmos.mode == ATMOS_SPLIT && atmos.split_point == k);
+
+    /* SCL has no page or layer any more; ARP is the arpeggiator */
+    go_home();
+    press(B_SCL); go_home();
+    bad += check("SCL opens no scale page (it changes the bank)", ui.home);
+    btn_down(B_SCL); frame(); key_down(3); frame(); key_up(3); frame(); btn_up(B_SCL); frames(200);
+    bad += check("SCL held with a key: no scale layer (nothing about the root or the scale changes)", TSEL->p[P_SCALE] == 0 && TSEL->p[P_ROOT] == 0);
+    engine_load_of(TSEL, ENGI_FM6, 2);
+    bad += check("the arpeggiator starts off", TSEL->p[P_AMODE] == 0);
+    press(B_ARP);   bad += check("ARP tap: the arpeggiator on (UP)", TSEL->p[P_AMODE] == 1);
+    press(B_ARP);   bad += check("ARP tap: off", TSEL->p[P_AMODE] == 0);
+    TSEL->p[P_AMODE] = 6;
+    press(B_ARP);   press(B_ARP);
+    bad += check("ARP comes back on the mode it had (REPEAT)", TSEL->p[P_AMODE] == 6);
+    TSEL->p[P_AMODE] = 0;
+    hold(B_ARP);    bad += check("ARP held: its page (mode, rate, octaves, gate)", cur_page()->graph == GR_ARP && !ui.home);
+    go_home();
+    atmos.mode = ATMOS_DUAL; TSEL->p[P_AMODE] = 0; trk[1].p[P_AMODE] = 0;
+    press(B_ARP);   bad += check("ARP in DUAL: both layers get the same mode", TSEL->p[P_AMODE] != 0 && trk[1].p[P_AMODE] == TSEL->p[P_AMODE]);
+    press(B_ARP);   atmos.mode = ATMOS_SINGLE;
 
     /* the tracks: layer A is track 1, B is track 2, nothing else can be selected */
     track_select(2);
