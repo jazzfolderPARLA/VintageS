@@ -220,18 +220,64 @@ static void head_pages(int32_t x, int32_t x1)          /* (x: after the transpor
         x += w + 5;
     }
 }
+/* ATMOS: the battery in the header, always: a small cell filled to the charge, the percentage, and a bolt over the cell while the
+ * FM-1 is powered over USB (charging; it has no charger status line, so USB power is what is known). */
+static void atmos_battery(int32_t x, int32_t pct, uint32_t ext)
+{
+    char b[8];
+    uint16_t c = ext ? T_THEME : (pct >= 0 && pct <= 15) ? T_REC : T_TEXT;
+    int32_t f = pct < 0 ? 0 : (pct * 12 + 50) / 100;
+    cv_rect(x, 4, 16, 10, T_MID);                       /* the cell's outline */
+    cv_rect(x + 1, 5, 14, 8, T_BG);
+    cv_rect(x + 16, 7, 2, 4, T_MID);                    /* its terminal */
+    if (f > 0)
+        cv_rect(x + 2, 6, f, 6, c);
+    if (ext) {                                          /* a bolt over the cell */
+        cv_rect(x + 9, 4, 2, 4, T_BG);                  /* (dark over the lit cell: it reads as a cut-out) */
+        cv_rect(x + 6, 7, 6, 2, T_BG);
+        cv_rect(x + 6, 9, 2, 5, T_BG);
+    }
+    if (pct < 0) {
+        str_cpy(b, "--", 4);
+    } else {
+        fmt_int(b, pct);
+        str_cpy(b + str_len(b), "%", 2);
+    }
+    cv_text_on(x + 21, 4, &AF_X, b, c == T_REC ? T_REC : T_TEXT, T_BG);
+}
 static void draw_head(void)
 {
     char b[16], chip[16];
     int32_t x;
     uint32_t low = !(usb.config && !usb.suspended) && batt_level() <= 1, msg = ui.msg_t || ui.layer;
-    uint32_t sig, moved = 0;
+    uint32_t ext = usb.config && !usb.suspended;              /* ATMOS: powered over USB = charging (the FM-1 has no charger status line) */
+    int32_t pct = song.batt_raw ? ((song.batt_raw - 505) * 100) / 95 : -1;   /* ADC 505 (empty) .. 600 (full): about 3.3 .. 4.2 V */
+    if (pct > 100) pct = 100;
+    if (pct < 0 && song.batt_raw) pct = 0;
+    uint32_t sig, moved = 0, lit[2];
     int16_t bpm = song.g[G_BPM];                        /* (read once: what is noted is what is drawn) */
     head_chip_text(chip);
+    {   /* ATMOS: MIDI activity, USB then TRS: a dot stays lit for 6 frames (about 0.2 s) after a message arrives.
+         * Counted in frames, not milliseconds: it does not depend on a clock. */
+        static uint32_t act_n[2];
+        static uint8_t hold[2];
+        uint32_t cur[2], i;
+        cur[0] = midi_rx_usb;
+        cur[1] = midi_rx_trs;
+        for (i = 0; i < 2u; i++) {
+            if (cur[i] != act_n[i]) {
+                act_n[i] = cur[i];
+                hold[i] = 6;
+            } else if (hold[i]) {
+                hold[i]--;
+            }
+            lit[i] = hold[i] != 0u;
+        }
+    }
     sig = (uint32_t)seq_erase_active(TSEL) * 8191u + (uint32_t)song.playing * 3u + song.rec * 5u + song.rec_wait * 65537u + (uint32_t)(song.octave + 8) * 11u +
           song.sel * 13131u + (msg ? str_hash(7u, ui.msg_t ? ui.msg : layer_head()) : str_hash(5u, chip)) +
           (ui.bpm_t != 0) * 31u + low * 7777u + (chain.running ? (chain.row + 1u) * 104729u : 0u) + ux.gen * 977u +
-          (ui.home ? 0u : ui.page * 2654435761u) + page_sheet() * 524287u;
+          (ui.home ? 0u : ui.page * 2654435761u) + page_sheet() * 524287u + lit[0] * 17u + lit[1] * 19u + (uint32_t)(pct + 1) * 37u + ext * 41u;
     if (bpm != ui.roll_bpm) {
         char a[8];
         fmt_int(a, ui.roll_bpm);
@@ -243,24 +289,15 @@ static void draw_head(void)
         ui.roll[ROLL_BPM].from[0] = 0;
     }
     fmt_int(b, bpm);
-    if (!ui.force && sig == ui.head_sig) {
-        if (ui.roll[ROLL_BPM].from[0] || moved) {       /* rolling, or snapped to the new value: the BPM's strip only */
-            cv_begin(BPM_W, H_HEAD, T_BG);
-            roll_text(ROLL_BPM, 0, 3, b, ui.bpm_t ? T_ACCENT : T_TEXT);
-            cv_blit(BPM_X, Y_HEAD);
-        }
+    if (!ui.force && sig == ui.head_sig)                /* (ATMOS: no BPM strip: there is no tempo to show) */
         return;
-    }
     ui.head_sig = sig;
     cv_begin(240, H_HEAD, T_BG);
-    cv_icon_mid(8, H_HEAD / 2, 12, chain.running ? ICON_X_SONG : song.playing ? ICON_X_PLAY : ICON_X_STOP,
-                song.playing ? T_TEXT : T_MID, T_BG);
-    roll_text(ROLL_BPM, BPM_X, 3, b, ui.bpm_t ? T_ACCENT : T_TEXT);
-    x = BPM_X + BPM_W + 2;                              /* (past the widest BPM) */
-    if (song.rec) {                                     /* (12 px, as the transport) */
-        cv_icon_mid(x, H_HEAD / 2, 12, ((song.rec & ~song.rec_wait) >> song.sel) & 1u ? ICON_X_REC : ICON_X_REC_O, T_REC, T_BG);
-        x += 14;
-    }
+    cv_circle(12, H_HEAD / 2, 7, lit[0] ? T_THEME : T_LINE, T_BG);      /* ATMOS: the MIDI dots, where the transport and BPM were */
+    cv_text_on(19, 4, &AF_X, "USB", lit[0] ? T_TEXT : T_MID, T_BG);
+    cv_circle(52, H_HEAD / 2, 7, lit[1] ? T_THEME : T_LINE, T_BG);
+    cv_text_on(59, 4, &AF_X, "TRS", lit[1] ? T_TEXT : T_MID, T_BG);
+    x = 82;
     if (seq_erase_active(TSEL)) {
         cv_text_r(232, 3, &AF_S, "ERASING", T_REC, T_BG);
     } else if (msg) {                                   /* a message, or the layer's name (may hold a keycap) */
@@ -268,6 +305,8 @@ static void draw_head(void)
     } else {
         int32_t cw = text_w(&AF_X, chip) + 16;
         if (cw < (ui.home ? 82 : 46)) cw = ui.home ? 82 : 46;   /* (a page: its name's, the dots beside it) */
+        atmos_battery(84, pct, ext);                    /* ATMOS: the battery, always (a message takes its place for a moment) */
+        x = 134;
         if (song.octave) {                              /* the octave shift, signed, in an outlined pill ("+2") */
             int32_t w;
             b[0] = song.octave > 0 ? '+' : '-';
@@ -285,8 +324,6 @@ static void draw_head(void)
         }
         if (!ui.home)                                   /* a page: where it is in its family */
             head_pages(x + 6, 232 - cw - (low ? 20 : 0) - (page_sheet() ? 16 : 0));
-        if (low)                                        /* the battery, only when it runs low */
-            cv_icon_mid(232 - cw - 18, H_HEAD / 2, 12, batt_level() ? ICON_X_BAT1 : ICON_X_BAT0, T_REC, T_BG);
         if (page_sheet())                               /* the page has a sheet (OCT+ held) */
             cv_text_r(232 - cw - 6 - (low ? 18 : 0), 2, &AF_S, "\x85", T_MID, T_BG);
         if (!ui.home && cur_page()->graph == GR_PATGRID) {   /* PATTERNS: its name plain (the grid is in colour);
