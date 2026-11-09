@@ -570,7 +570,7 @@ static void stage_card_single(const stage_snd_t *s, uint16_t tc)
     } else {
         stage_line(116, 71, &AF_L, a, nc, T_LIFT, 212);
     }
-    cv_text_c(116, 134, &AF_X, "SINGLE", T_DIM, T_LIFT);
+    cv_text_c(116, 134, &AF_X, "MODE SINGLE", T_MID, T_LIFT);
     if (s->fav)                                         /* a star when the sound is a favourite */
         cv_icon_on(212, 12, 12, ICON_X_STAR, T_THEME, T_LIFT);
 }
@@ -657,7 +657,7 @@ static void stage_monitor_card(const stage_snd_t *sa, const stage_snd_t *sb, uin
         stage_line(106, 164, &AF_L, sa->nm, sa->pend ? T_ACCENT : T_TEXT, T_BG, 212);
         stage_num_text(sa, n);
         cv_text_on(0, 205, &AF_X, n, T_MID, T_BG);
-        cv_text_c(106, 205, &AF_X, "SINGLE", T_TEXT, T_BG);
+        cv_text_c(106, 205, &AF_X, "MODE SINGLE", T_TEXT, T_BG);
     } else {
         char low[16], high[16], nn[6];
         stage_note_name(nn, atmos.split_point);
@@ -673,7 +673,7 @@ static void stage_monitor_card(const stage_snd_t *sa, const stage_snd_t *sb, uin
             stage_monitor_row(140, sb, cb, low);        /* below the split point: layer B */
             stage_monitor_row(170, sa, ca, high);
         }
-        cv_text_on(0, 205, &AF_X, mode == ATMOS_DUAL ? "DUAL" : "SPLIT", T_TEXT, T_BG);
+        cv_text_on(0, 205, &AF_X, mode == ATMOS_DUAL ? "MODE DUAL" : "MODE SPLIT", T_TEXT, T_BG);
     }
     str_cpy(l, "VOICES ", 8);
     fmt_int(l + 7, (int32_t)voices);
@@ -741,14 +741,14 @@ static void stage_sounds(void)
         if (!mode) {
             stage_card_single(&sa, T_TRK(ka));
         } else if (mode == ATMOS_DUAL) {
-            stage_card_half(0, &sa, T_TRK(ka), "LAYER A");
-            stage_card_half(118, &sb, T_TRK(kb), "LAYER B");
+            stage_card_half(0, &sa, T_TRK(ka), "DUAL  A");
+            stage_card_half(118, &sb, T_TRK(kb), "DUAL  B");
         } else {
-            char low[16], high[16], n[6];
+            char low[24], high[24], n[6];
             stage_note_name(n, atmos.split_point);
-            str_cpy(low, "LOW  < ", sizeof low);
+            str_cpy(low, "SPLIT LOW <", sizeof low);
             str_cpy(low + str_len(low), n, 6);
-            str_cpy(high, "HIGH  ", sizeof high);
+            str_cpy(high, "SPLIT HIGH ", sizeof high);
             str_cpy(high + str_len(high), n, 6);
             str_cpy(high + str_len(high), "+", 2);
             stage_card_half(0, &sb, T_TRK(kb), low);    /* below the split point: layer B */
