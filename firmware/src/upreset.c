@@ -30,6 +30,8 @@
 #define UP_VER_DRUM_GRID 10u
 #define UP_VER_GRID 5u                           /* 4 with a drum grid as the pattern (see the top) */
 #define UP_BANK_MAGIC 0x31425055u                /* "UPB1" */
+#define UP_FXN 15u                               /* the effects: P_FXTYPE .. P_FXSEND3 */
+#define UP_FXMARK 0xFBu                          /* cz_extra[15]: this record carries its effects in cz_extra[0..14] (+64) */
 typedef struct {
     uint8_t used, ver, engine, np;               /* UP_USED, UP_VER, engine, P_COUNT when stored */
     char name[12];                               /* ASCII 32..126, 0-padded (no 0 when 12 long) */
@@ -484,6 +486,11 @@ static int up_store(uint32_t k, const char *name)
             }
         }
     }
+    if (r.engine != ENGI_DRUM) {                        /* the effects go with the sound (a DRUM record's extra holds its patch) */
+        for (i = 0; i < UP_FXN; i++)
+            r.cz_extra[i] = (uint8_t)(motion_base_value(TSEL, P_FXTYPE + i) + 64);
+        r.cz_extra[15] = UP_FXMARK;
+    }
     if(r.engine==ENGI_DRUM){uint8_t b[DRUM_WIRE_BYTES];drum_patch_pack(b,&drum_patch[song.sel]);memcpy(r.cz_extra,b,sizeof r.cz_extra);memcpy(r.packed+r.np,b+sizeof r.cz_extra,8u);r.ver=r.ver==UP_VER_GRID?UP_VER_DRUM_GRID:UP_VER_DRUM;}
     int rc = up_put(k, &r);
     if ((rc == 0 || rc == 3) && r.engine == ENGI_FM6) {    /* its voice: native FM6 slot k */
@@ -529,6 +536,9 @@ static int up_load(uint32_t k)
             if (!param_kept(i))
                 t->p[i] = param_reserved(i) ? 0 : v[i];
         t->preset = 0;
+        if (r->engine != ENGI_DRUM && r->cz_extra[15] == UP_FXMARK)   /* its effects too (an older record keeps the track's) */
+            for (i = 0; i < UP_FXN; i++)
+                t->p[P_FXTYPE + i] = (int16_t)clamp((int32_t)r->cz_extra[i] - 64, TP[P_FXTYPE + i].min, TP[P_FXTYPE + i].max);
         if (up_native_cz(r))up_cz_raw(r,cz_patch[song.sel % NTRK].raw);
         if(r->engine==ENGI_DRUM){memset(&drum_patch[song.sel],0,sizeof(drum_patch_t));if(r->ver==UP_VER_DRUM || r->ver==UP_VER_DRUM_GRID)up_drum_raw(r,&drum_patch[song.sel]);}
         cz_track_accept(t);

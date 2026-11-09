@@ -147,6 +147,7 @@ static struct {
     uint8_t confirm;             /* the OCT- / OCT+ dialog: CF_*, 0 = none */
     uint8_t confirm_trk;         /* the track it clears, the slot it overwrites */
     uint8_t uslot;               /* SAVE > USER: the selected user preset slot */
+    uint8_t qsv, qsv_arm;        /* SAVE > USER as the quick save: on; the slot (+1) armed for a second SAVE to overwrite */
     uint8_t song_row;            /* SONG: row selected, count selects the next empty row */
     uint8_t uboot;               /* main.c: seconds left before UPDATE MODE (OCT- + OCT+ held), 0 = none */
     uint8_t proj_new;            /* SAVE > PROJECT: KNOB 1 past TMPL, NEW (a new song: ui_new.c); SLOT unchanged */
@@ -344,6 +345,7 @@ static void page_entered(void)
     seq_midi_reset();
     ui.hot_t = 0;                                /* clear the previous page's emphasis */
     ui.act = 0;
+    ui.qsv = ui.qsv_arm = 0;                     /* (open_family sets the quick save after this) */
     ui.proj_new = 0;
     ui.ptc_on = 0;
     if (pg->graph == GR_BROWSE) {                /* (OCT- goes back to the sound from before: its loads, a level */
@@ -516,6 +518,18 @@ static int fam_has(uint32_t fam, uint32_t page)         /* page: one the family'
     return page < NPAGES && (native_page(page, fam) || PAGES[page].fam == fam) && page_visible(page);
 }
 
+/* SAVE: the quick save's first slot: the one the sound came from (in this list), else the first empty one */
+static void save_pick_slot(void)
+{
+    uint32_t n = user_limit(), k = user_of(TSEL);
+    if (k < n && (TSEL->user_native != 0) == (library_native() != 0)) {
+        ui.uslot = (uint8_t)k;
+        return;
+    }
+    for (k = 0; k < n && (user_used(k) || user_old(k)); k++) {}
+    ui.uslot = (uint8_t)(k < n ? k : 0u);
+}
+
 static void open_family(uint32_t fam)
 {
     if ((fam == FAM_ENV || fam == FAM_LFO) && native_titles(fam)) {   /* ENV / LFO of the Prophet, FM6, CZ-1 */
@@ -546,8 +560,12 @@ static void open_family(uint32_t fam)
     ui.fam_last[fam] = ui.page;
     ui.home = 0;
     page_entered();
-    if (fam == FAM_SAVE && cur_page()->graph == GR_USER)
-        slot_save_sheet();                       /* SAVE: USER; OCT+ then its slot's sheet on Save here (ui_slots.c) */
+    if (fam == FAM_SAVE && cur_page()->graph == GR_USER) {   /* SAVE: the quick save: PRESETS picks the slot, SAVE does it */
+        save_pick_slot();
+        ui.qsv = 1;
+        ui_message("PRESETS: PICK SLOT");
+        str_cpy(ui.msg2, "SAVE: OK  HOME: EXIT", sizeof ui.msg2);
+    }
 }
 
 /* GLO always enters the mixer from another family. Subsequent taps visit the
