@@ -33,6 +33,7 @@ static const uint8_t LY_KC[LAYER_N] = {0, 0, KC_GLO};
 static const page_t LY_SCL = {"SCL", FAM_SCL, SC_TRACK, GR_SCALE, {P_ROOT, P_SCALE, P_CHRD, P_VOIC}};
 #define LY_OPEN 2u                     /* ui.ly_t0: the map opened (no tap any more) */
 #define LY_COMBO 4u                    /* .. by a combo */
+#define LY_LOCK_ON 0                   /* GLO's double tap lock: off */
 #define LY_DEAD 8u                     /* .. pressed where there is no layer: does nothing */
 #define layer_seen (favorites.factory[15][31])   /* bit l: layer l opened once (a byte no engine uses) */
 
@@ -55,7 +56,12 @@ static uint32_t ly_bit(uint32_t l) { return 1u << panel.btn[LAYERS[l].btn]; }
 static uint32_t ly_down(uint32_t l) { return l && ((fm1_in.buttons & ly_bit(l)) != 0u || ui.lock == l); }
 static uint32_t layer_bits(void)
 {
-    return 0u;   /* no layer button: GLO's quick layer (hold) is off, GLO only taps (MIXER -> GLOBAL -> SYSTEM) */
+    uint32_t l, m = 0;
+    for (l = LAYER_GLO; l < LAYER_N; l++)
+        m |= ly_bit(l);
+    if (step_modifier_context())
+        m &= ~step_modifier_mask();                      /* synth STEP: SCL, EDIT edit notes */
+    return m;
 }
 static uint32_t layer_btn(void) { return LAYERS[ui.layer % LAYER_N].btn; }
 static const char *layer_head(void)
@@ -92,6 +98,7 @@ static void layer_arm(uint32_t pressed, uint32_t now)
             lys.dtap=lys.dt_l==l && fm1_ms-lys.dt_ms<=LY_DTAP_MS;
             lys.dt_l=0;
             ui.ly = (uint8_t)l;
+            layer_seen |= (uint8_t)(1u << l);           /* (GLO's quick layer is off: no "HOLD [GLO] QUICK" hint) */
             ui.ly_t0 = (now & ~15u) | 1u | (layer_allowed() ? 0u : LY_DEAD);
             return;
         }
@@ -152,13 +159,12 @@ static uint32_t layer_gesture(uint32_t now, uint32_t combo)
     if (ly_down(l)) {
         if (!(*t0 & (LY_OPEN | LY_DEAD)) &&
             (combo || now - (*t0 & ~15u) >= (uint32_t)HOLD_MS[settings_hold % 4u] * 1000u * FM1_TICKS_PER_US)) {
-            *t0 |= LY_OPEN | (combo ? LY_COMBO : 0u);
-            layer_opened(l);
+            *t0 |= LY_DEAD;                             /* GLO's quick layer is off: held, it does nothing (no tap either) */
         }
         return 0;
     }
     l = *t0 & (LY_OPEN | LY_DEAD) || combo ? 0u : l;   /* (a knob turned as it was let go: a combo, no tap) */
-    if (l && lys.dtap) {                                /* #83: a double tap: locked open (no tap) */
+    if (LY_LOCK_ON && l && lys.dtap) {                  /* #83: a double tap: locked open (no tap) (off) */
         lys.dtap = 0;
         ui.home=lys.nv.home; ui.page=lys.nv.page; ui.act=lys.nv.act;
         memcpy(ui.fam_last,lys.nv.fam,sizeof ui.fam_last); song.seq_mode=lys.nv.seq;
