@@ -288,28 +288,14 @@ static int32_t list_accel(uint32_t role, int32_t s, uint32_t total, uint32_t *fa
     return accel_by(role, s, total > 256u ? 16u : total > 64u ? 8u : total > 16u ? 4u : 1u, fast);
 }
 
-/* MIXER page: KNOB 1 LEVEL, 2 PAN, 3 unused, 4 MUTE of the selected track (right = ON, left = OFF: the
- * track itself is ALGORITHM's, on every page). Pattern length stays on SEQ. */
+/* MIXER page (GLO): KNOB 1 LEVEL of track 1, KNOB 2 LEVEL of track 2, KNOB 3 PAN of track 1, KNOB 4 PAN of
+ * track 2. Tracks 3 and 4 are not on this page; it does not follow ALGORITHM's selected track. */
 static void tracks_edit(uint32_t slot, int32_t steps)
 {
-    track_t *t = TSEL;
-    int16_t *vp;
-    const param_desc_t *d;
-    switch (slot) {
-    case 3:
-        t->p[P_MUTE] = (int16_t)(steps > 0);
-        return;
-    case 0:
-        vp = &t->p[P_LEVEL];
-        d = &TP[P_LEVEL];
-        break;
-    case 2:
-        return;
-    default:
-        vp = &t->p[P_PAN];
-        d = &TP[P_PAN];
-        break;
-    }
+    track_t *t = &trk[slot & 1u];
+    uint32_t id = slot < 2u ? P_LEVEL : P_PAN;
+    int16_t *vp = &t->p[id];
+    const param_desc_t *d = &TP[id];
     *vp = (int16_t)clamp(*vp + accel(EN_K1 + slot, steps, d->max - d->min), d->min, d->max);
     motion_capture(t, (uint32_t)(vp - t->p), *vp);
 }
