@@ -55,12 +55,7 @@ static uint32_t ly_bit(uint32_t l) { return 1u << panel.btn[LAYERS[l].btn]; }
 static uint32_t ly_down(uint32_t l) { return l && ((fm1_in.buttons & ly_bit(l)) != 0u || ui.lock == l); }
 static uint32_t layer_bits(void)
 {
-    uint32_t l, m = 0;
-    for (l = LAYER_GLO; l < LAYER_N; l++)
-        m |= ly_bit(l);
-    if (step_modifier_context())
-        m &= ~step_modifier_mask();                      /* synth STEP: SCL, EDIT edit notes */
-    return m;
+    return 0u;   /* no layer button: GLO's quick layer (hold) is off, GLO only taps (MIXER -> GLOBAL -> SYSTEM) */
 }
 static uint32_t layer_btn(void) { return LAYERS[ui.layer % LAYER_N].btn; }
 static const char *layer_head(void)

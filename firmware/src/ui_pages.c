@@ -773,6 +773,8 @@ static void pv_picture(void)
 /* ---------------------------------------------------------- MIXER --- */
 #define PV_STRIP_TOP 22                                 /* a strip: 54 x 212 at CARD_X(k), rows 22 .. 233 */
 #define PV_STRIP_ROWS 212
+#define PV_NSTRIP 2u                                    /* the MIXER shows tracks 1 and 2 only, on the middle two columns */
+#define PV_MX(k) CARD_X((k) + 1u)
 static struct { uint32_t strip[NTRK]; uint8_t meter[NTRK]; } pvm;
 /* knob_arc as knob() draws it (a bipolar value from 12 o'clock), on bg */
 static void pv_knob(int32_t x, int32_t y, int32_t r, const uint8_t *cov, const uint8_t *ang, int32_t v, int32_t lo,
@@ -797,13 +799,13 @@ static void pv_meter(uint32_t k, uint16_t c)           /* track k's meter: 3 x 4
     cv_rrect(0, 0, 3, 44, 1, T_LINE, k == song.sel ? T_LIFT : T_PANEL);
     if (h > 0)
         cv_rrect(0, 44 - h, 3, h, 1, c, T_LINE);
-    cv_blit((uint32_t)(CARD_X(k) + 48), PV_STRIP_TOP + 50);
+    cv_blit((uint32_t)(PV_MX(k) + 48), PV_STRIP_TOP + 50);
 }
 static void pv_strip(uint32_t k)
 {
     track_t *t = &trk[k];
     uint32_t sel = k == song.sel, mute = t->p[P_MUTE] != 0, arm = (song.rec >> k) & 1u, lvl = trk_level(k), sig;
-    uint32_t hot = sel && ui.hot_t ? ui.hot_col + 1u : 0u;   /* 1 LEVEL, 2 PAN, 3 unused, 4 MUTE */
+    uint32_t hot = !ui.hot_t ? 0u : ui.hot_col == k ? 1u : ui.hot_col == 2u + k ? 2u : 0u;   /* 1 LEVEL (KNOB 1 / 2), 2 PAN (KNOB 3 / 4) */
     int32_t pk = t->peak, m, pan = clamp(t->p[P_PAN], -64, 63);
     uint16_t tc = mute ? T_DIM : T_TRK(k), bg = sel ? T_LIFT : T_PANEL;
     char nm[16], l1[16], l2[16], b[8];
@@ -859,14 +861,6 @@ static void pv_strip(uint32_t k)
         str_cpy(b, "C", sizeof b);
     }
     cv_text_c(15, 145, &AF_X, b, hot == 2u ? T_TEXT : T_SEC, bg);
-    if (mute) {                                         /* MUTE: lit when muted */
-        cv_rrect(6, 168, 42, 16, 5, hot == 4u ? T_TEXT : ux_mix(T_SURF, T_MID, 50), bg);
-        cv_text_c(27, 170, &AF_X, "MUTE", T_BG, hot == 4u ? T_TEXT : ux_mix(T_SURF, T_MID, 50));
-    } else {
-        cv_rrect(6, 168, 42, 16, 5, hot == 4u ? T_TEXT : T_LINE, bg);
-        cv_rrect(7, 169, 40, 14, 4, T_SURF, hot == 4u ? T_TEXT : T_LINE);
-        cv_text_c(27, 170, &AF_X, "MUTE", T_DIM, T_SURF);
-    }
     if (arm)                                            /* armed: a REC dot, else its ring */
         cv_disc(27, 198, 9, T_REC, 0);
     else
@@ -875,7 +869,7 @@ static void pv_strip(uint32_t k)
         int32_t h = pvm.meter[k] * 44 / (TS_MH - 2);
         cv_rrect(48, 94 - h, 3, h, 1, tc, T_LINE);
     }
-    cv_blit((uint32_t)CARD_X(k), PV_STRIP_TOP);
+    cv_blit((uint32_t)PV_MX(k), PV_STRIP_TOP);
 }
 
 /* ----------------------------------------------------------- draw --- */
@@ -952,7 +946,7 @@ static void pv_draw(void)
         if (ui.force)
             lcd_fill(0, H_HEAD, 240, 240 - H_HEAD, T_BG);
         draw_head();
-        for (k = 0; k < NTRK; k++)
+        for (k = 0; k < PV_NSTRIP; k++)
             pv_strip(k);
         return;
     }
