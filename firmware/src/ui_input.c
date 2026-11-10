@@ -361,11 +361,53 @@ static void qsave_chord(void)
     }
     qsave_req = 1;
 }
+/* SAVE > USER, the quick save: the sound goes to the slot picked (KNOB 1 / PRESETS), with its effects where the preset
+ * keeps them (upreset.c). The slot it came from, or an empty one, is written at once (the same place: its name stays);
+ * another sound's slot asks for a second SAVE. No sheet, no NAME screen. HOME leaves. SAVE held: back to its own slot */
+static uint32_t save_origin(void)                       /* the slot the sound came from in this list, else USER_NONE */
+{
+    uint32_t k = user_of(TSEL);
+    return k < user_limit() && (TSEL->user_native != 0) == (library_native() != 0) ? k : USER_NONE;
+}
+static void save_to(uint32_t k)
+{
+    char nm[24];
+    if (transport_busy()) {
+        ui_message("STOP TO SAVE");
+        return;
+    }
+    nm[0] = 0;
+    if (k == save_origin())
+        user_name(k, nm);                               /* the same place: it keeps its name */
+    else
+        trk_short_name(song.sel, nm);                   /* else the sound's own */
+    user_ui_named(2u, k, nm);
+    if (user_used(k)) {                                 /* saved: the sound now comes from there */
+        TSEL->user = (uint8_t)(k + 1u);
+        TSEL->user_native = (uint8_t)(library_native() != 0);
+    }
+    ui.force = 1;
+}
+static void save_confirm(void)                          /* SAVE tapped on SAVE > USER */
+{
+    uint32_t k = ui.uslot % user_limit();
+    if (k != save_origin() && (user_used(k) || user_old(k)) && ui.qsv_arm != k + 1u) {
+        ui.qsv_arm = (uint8_t)(k + 1u);
+        ui_message("USED: SAVE AGAIN");                 /* another sound's slot */
+        return;
+    }
+    ui.qsv_arm = 0;
+    save_to(k);
+}
 static void qsave_poll(void)
 {
     if (qsave_req && !transport_busy() && !transport_req) {
+        uint32_t o = save_origin();
         qsave_req = 0;
-        project_quick_save();
+        if (o < USER_NONE)
+            save_to(o);                                 /* SAVE held: the sound back to its slot */
+        else
+            ui_message("TAP SAVE: PICK SLOT");
     }
 }
 
@@ -830,6 +872,7 @@ static void edit_param(uint32_t slot, int32_t steps)
     if (pg->graph == GR_USER) {                           /* KNOB 1 the slot */
         if (slot == 0u)
             ui.uslot = (uint8_t)clamp((int32_t)ui.uslot + list_accel(EN_K1, steps, user_limit(), 0), 0, user_limit() - 1);
+        ui.qsv_arm = 0;
         return;
     }
     if (pg->graph == GR_MOD && slot == 1u) {             /* MOD: KNOB 2 the route; 1 its SRC, 3 DST, 4 AMT */
@@ -1979,8 +2022,12 @@ static void ui_input(void)
     if (save == BT_HOLD && !ui.confirm) {
         qsave_chord();
         qsave_poll();
-    } else if (save == BT_TAP && !ui.confirm)
-        open_family(FAM_SAVE);
+    } else if (save == BT_TAP && !ui.confirm) {
+        if (!ui.home && ui.qsv && cur_page()->graph == GR_USER)
+            save_confirm();                             /* the quick save: SAVE again does it */
+        else
+            open_family(FAM_SAVE);
+    }
     if (!ui.confirm && !lay && (edit == BT_HOLD || edit_oct)) {
         uint32_t dir = ((edit_oct >> panel.btn[B_OCTDN]) & 1u) | (((edit_oct >> panel.btn[B_OCTUP]) & 1u) << 1);
         step_edit_combo();
@@ -2212,6 +2259,9 @@ static void ui_input(void)
     if (s) step_edit_combo();
     if (s && !ui.home && cur_page()->graph == GR_SCALE_PICKER) {
         scale_picker_step(list_accel(EN_PRESET, s, scale_picker_count(), 0));
+    } else if (s && !ui.home && cur_page()->graph == GR_USER) {   /* SAVE > USER: PRESETS picks the slot (as KNOB 1) */
+        ui.uslot = (uint8_t)clamp((int32_t)ui.uslot + list_accel(EN_PRESET, s, user_limit(), 0), 0, user_limit() - 1);
+        ui.qsv_arm = 0;
     } else if (s && (ui.home || cur_page()->graph == GR_BROWSE)) {
         /* PRESETS browses the selected part's sounds (all engines, then user presets) on HOME and the
          * PRESETS page only (never the steps); elsewhere (TRACKS too, where one records) a stray turn
