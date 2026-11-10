@@ -128,7 +128,11 @@ static const engine_t *const ENGINES[NENGINES] = {
 #else
     &ENG_RETIRED,                /* 9: retired PHYS; stored ID reserved */
 #endif
+#if MELODEE_DRUM
     &ENG_DRUM,                   /* 10 (ENGI_DRUM): kept (the NEW project roles and the stored songs use it); ATMOS hides it from every picker */
+#else
+    &ENG_RETIRED,                /* 10: DRUM removed (MELODEE_DRUM 0); stored ID reserved */
+#endif
 #if MELODEE_LEGACY_EXTRAS
     &ENG_NOISE,                  /* 11 */
 #else

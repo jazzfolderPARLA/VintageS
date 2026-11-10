@@ -39,6 +39,9 @@
 #define ENGI_PROPHET 19u /* 16..18 reserved: historical preset namespaces */
 #define USER_GENERAL 16u
 #define USER_NATIVE_P5 20u
+#ifndef MELODEE_DRUM
+#define MELODEE_DRUM 0            /* the DRUM engine (808 / 909 kits): off in this build, hidden from every picker anyway */
+#endif
 #define NENGINES 20               /* 13 SLICE and 14 OBXF reserved; 15 native CZ-1 */
 #define USER_NATIVE_FM 17u
 #define USER_NATIVE_CZ 18u
