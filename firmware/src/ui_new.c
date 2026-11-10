@@ -38,7 +38,7 @@ static uint32_t new_role_sound(uint32_t r, uint32_t *k)
     uint32_t i, total, src;
     if (r == NR_DRUMS) {
         *k = 0;
-        return ENGI_DRUM;
+        return MELODEE_DRUM ? ENGI_DRUM : USER_NONE;     /* (no DRUM engine in this build: no DRUMS sound) */
     }
     for (i = 0; i < NELEM(CAT_ORDER) && CAT_ORDER[i] != NR_CAT[r]; i++)
         ;
@@ -104,7 +104,10 @@ static void new_input(uint32_t oct, int home_tap)
             else if (k == 1u) nw.scale = (uint8_t)clamp((int32_t)nw.scale + (s > 0 ? 1 : -1), 0, SCALE_TOTAL - 1);
             else if (k == 2u) nw.bpm = (int16_t)clamp(nw.bpm + accel(EN_K1 + k, s, GP[G_BPM].max - GP[G_BPM].min), GP[G_BPM].min, GP[G_BPM].max);
         } else {
-            nw.role[k] = (uint8_t)clamp((int32_t)nw.role[k] + (s > 0 ? 1 : -1), 0, NR_N - 1);
+            int32_t r = (int32_t)nw.role[k] + (s > 0 ? 1 : -1);
+            if (!MELODEE_DRUM && r == NR_DRUMS)
+                r += s > 0 ? 1 : -1;                    /* no DRUMS role without the DRUM engine: skipped */
+            nw.role[k] = (uint8_t)clamp(r, 0, NR_N - 1);
         }
     }
     if (home_tap)
