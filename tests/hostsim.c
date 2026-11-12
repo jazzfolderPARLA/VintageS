@@ -10,6 +10,9 @@
  * PRESET=1 (the whole preset: sends, voice mode), STEPS=n,n,... (a pattern, 0 = rest; see below).
  * TRACKS=DIR: the 4-track test (tracks_demo below): a bass / pad / lead / drums (808 DRUM) pattern
  * with live recording into DIR (mix + solos), checks, and the cost against one track. */
+#ifndef MELODEE_DRUM
+#define MELODEE_DRUM 1                 /* the host tests keep the DRUM engine (the firmware builds without it) */
+#endif
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/wait.h>

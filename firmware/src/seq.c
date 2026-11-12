@@ -51,7 +51,7 @@ static uint32_t trk_index(const track_t *t) { return (uint32_t)(t - trk); }
 
 static uint32_t trk_midi_ch(uint32_t i) { return i % NTRK; }   /* MIDI channel 0..15 of track i (keys -> MIDI out) */
 
-static int drum_track(const track_t *t) { return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM; }
+static int drum_track(const track_t *t) { return MELODEE_DRUM && ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM; }
 
 static void live_note_on(const track_t *t, uint32_t note, uint32_t vel)
 {

@@ -20,7 +20,8 @@
 #include <stdint.h>                  /* (the firmware has no libc: no string.h, no memcmp / memcpy here) */
 
 enum { ATMOS_SINGLE, ATMOS_DUAL, ATMOS_SPLIT, ATMOS_NMODE };
-#define ATMOS_NBANK 4u
+#define ATMOS_NBANK 5u                  /* A DX7, B PROPHET-5, C JUNO-106, D CZ / SID, E OBERVAVE */
+#define ATMOS_NSTORED 4u                /* the banks whose last sound is kept (favorites.factory[8] bytes 6..9; E starts at its first sound) */
 #define ATMOS_ENGI_SID 3u               /* the SID engine's number in engines.c ENGINES[] (no ENGI_ name): bank D with CZ-1 */
 #define ATMOS_NPRE  128u
 #define ATMOS_SPLIT_DEFAULT 60u          /* middle C */
@@ -34,7 +35,7 @@ typedef struct {
 } atmos_t;
 
 /* last[]: the first visit to a bank plays its first real sound (PROPHET and CZ-1 start with an INIT program at 0) */
-static atmos_t atmos = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1}};
+static atmos_t atmos = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1}};
 
 #define ATMOS_ROW      8u                /* favorites.factory[ATMOS_ROW] */
 #define ATMOS_DATA     2u
@@ -44,7 +45,7 @@ static const uint8_t ATMOS_TAG[4] = {'A', 'T', 'M', 1};
 /* row: favorites.factory[ATMOS_ROW] of the stored record. Each value is checked on its own. */
 static void atmos_load(const uint8_t *row)
 {
-    atmos_t a = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1}};
+    atmos_t a = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1}};
     uint32_t tag_ok = 1;
     for (uint32_t i = 0; i < sizeof ATMOS_TAG; i++)
         if (row[ATMOS_TAGPOS + i] != ATMOS_TAG[i])
@@ -55,7 +56,7 @@ static void atmos_load(const uint8_t *row)
         if (d[1] < 128u) a.split_point = d[1];
         if (d[2] < ATMOS_NBANK && d[3] < ATMOS_NPRE) { a.bank = d[2]; a.preset = d[3]; }
         if (d[4] < ATMOS_NBANK && d[5] < ATMOS_NPRE) { a.b_bank = d[4]; a.b_preset = d[5]; }
-        for (uint32_t i = 0; i < ATMOS_NBANK; i++) a.last[i] = d[6 + i] < ATMOS_NPRE ? d[6 + i] : 0;
+        for (uint32_t i = 0; i < ATMOS_NSTORED; i++) a.last[i] = d[6 + i] < ATMOS_NPRE ? d[6 + i] : 0;
     }
     atmos = a;
 }
@@ -67,7 +68,7 @@ static void atmos_save(uint8_t *row)
     d[0] = ATMOS_SINGLE; d[1] = atmos.split_point;   /* the mode is not kept */
     d[2] = atmos.bank;  d[3] = atmos.preset;
     d[4] = atmos.b_bank; d[5] = atmos.b_preset;
-    for (uint32_t i = 0; i < ATMOS_NBANK; i++) d[6 + i] = atmos.last[i];
+    for (uint32_t i = 0; i < ATMOS_NSTORED; i++) d[6 + i] = atmos.last[i];
     for (uint32_t i = 0; i < sizeof ATMOS_TAG; i++)
         row[ATMOS_TAGPOS + i] = ATMOS_TAG[i];
 }

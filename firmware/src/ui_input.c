@@ -372,6 +372,10 @@ static uint32_t save_origin(void)                       /* the slot the sound ca
 static void save_to(uint32_t k)
 {
     char nm[24];
+    if (MELODEE_OBV && TSEL->eng_req == ENGI_OBV) {
+        ui_message("OBERVAVE: NO SAVE YET");            /* (its own preset record comes later) */
+        return;
+    }
     if (transport_busy()) {
         ui_message("STOP TO SAVE");
         return;
@@ -1401,9 +1405,9 @@ static uint32_t btn_hold(uint32_t *t0, uint32_t label, uint32_t now, int hold_ok
 /* ATMOS banks, on the ARP button: A DX7 (the FM6 engine), B PROPHET-5, C JUNO-106, D CZ-1.
  * ARP tap: the next bank, with the sound it had last (atmos.last[]); ARP held: the sound list (PRESETS page).
  * (A bank whose engine is 255 would be skipped by the tap; none is now.) */
-static const uint8_t ATMOS_BANK_ENGINE[ATMOS_NBANK] = {ENGI_FM6, ENGI_PROPHET, ENGI_JUNO, ENGI_CZ};
-static const char *const ATMOS_BANK_NAME[ATMOS_NBANK] = {"A  DX7", "B  PROPHET-5", "C  JUNO-106", "D  CZ / SID"};
-static const char *const ATMOS_BANK_WORD[ATMOS_NBANK] = {"DX7", "PROPHET-5", "JUNO-106", "CZ / SID"};   /* Stage's card */
+static const uint8_t ATMOS_BANK_ENGINE[ATMOS_NBANK] = {ENGI_FM6, ENGI_PROPHET, ENGI_JUNO, ENGI_CZ, MELODEE_OBV ? ENGI_OBV : 255u};   /* E: OBERVAVE (single only) */
+static const char *const ATMOS_BANK_NAME[ATMOS_NBANK] = {"A  DX7", "B  PROPHET-5", "C  JUNO-106", "D  CZ / SID", "E  OBERVAVE"};
+static const char *const ATMOS_BANK_WORD[ATMOS_NBANK] = {"DX7", "PROPHET-5", "JUNO-106", "CZ / SID", "OBERVAVE"};   /* Stage's card */
 static const char *atmos_bank_word(uint32_t b) { return ATMOS_BANK_WORD[b % ATMOS_NBANK]; }
 static uint32_t atmos_bank_of(uint32_t e)
 {
@@ -1416,7 +1420,7 @@ static uint32_t atmos_bank_of(uint32_t e)
 }
 static void atmos_bank_next(void)
 {
-    uint32_t cur = atmos_bank_of(TSEL->eng_req), b, n, e, pi;
+    uint32_t cur = atmos_bank_of(TSEL->eng_req), b, n, e, pi, was;
     if (cur >= ATMOS_NBANK)
         cur = atmos.bank % ATMOS_NBANK;                 /* (the track plays another engine: from the last bank) */
     else if (user_of(TSEL) >= USER_NONE && TSEL->preset < ATMOS_NPRE && TSEL->eng_req == ATMOS_BANK_ENGINE[cur])
@@ -1432,11 +1436,14 @@ static void atmos_bank_next(void)
     e = ATMOS_BANK_ENGINE[b];
     pi = atmos.last[b];
     if (pi >= ENGINES[e]->npresets)
-        pi = e == ENGI_PROPHET ? 1u : 0u;              /* (Prophet: its first factory program, as set_engine_of) */
-    engine_load_of(TSEL, e, pi);
+        pi = e == ENGI_PROPHET || e == ENGI_OBV ? 1u : 0u;   /* (Prophet, OBERVAVE: their first factory program, as set_engine_of) */
+    was = atmos.mode;
+    engine_load_of(TSEL, e, pi);                        /* (OBERVAVE puts the mode back to SINGLE: atmos_single_only) */
     atmos.bank = (uint8_t)b;
     atmos.preset = (uint8_t)(pi < ATMOS_NPRE ? pi : 0u);
     ui_say("BANK ", ATMOS_BANK_NAME[b]);
+    if (MELODEE_OBV && e == ENGI_OBV && was != ATMOS_SINGLE)   /* OBERVAVE plays alone: no DUAL, no SPLIT */
+        str_cpy(ui.msg2, "SINGLE ONLY", sizeof ui.msg2);
     ui.force = 1;
     settings_save();
 }
@@ -1514,7 +1521,7 @@ static void atmos_b_bank_next(void)
     b = cur;
     for (n = 0; n < ATMOS_NBANK; n++) {
         b = (b + 1u) % ATMOS_NBANK;
-        if (ATMOS_BANK_ENGINE[b] != 255u)
+        if (ATMOS_BANK_ENGINE[b] != 255u && ATMOS_BANK_ENGINE[b] != ENGI_OBV)   /* (OBERVAVE is never layer B) */
             break;
     }
     e = ATMOS_BANK_ENGINE[b];
@@ -2081,7 +2088,11 @@ static void ui_input(void)
         layer_tap(lytap);
     if (seq == BT_TAP) {                                /* ATMOS: SEQ tap: SINGLE -> DUAL -> SPLIT -> SINGLE */
         atmos_mode_next();
-        if (atmos.mode == ATMOS_SPLIT)
+        if (MELODEE_OBV && atmos.mode != ATMOS_SINGLE &&
+            (TSEL->eng_req == ENGI_OBV || trk[atmos_b_track(song.sel % NTRK, NTRK)].eng_req == ENGI_OBV)) {
+            atmos.mode = ATMOS_SINGLE;                  /* OBERVAVE plays alone */
+            ui_message("OBERVAVE: SINGLE ONLY");
+        } else if (atmos.mode == ATMOS_SPLIT)
             atmos_split_say();                          /* SPLIT and the split point (the ALGORITHM encoder moves it) */
         else
             ui_message(atmos.mode == ATMOS_DUAL ? "DUAL LAYER" : "SINGLE");

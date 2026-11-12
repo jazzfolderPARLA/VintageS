@@ -2260,7 +2260,7 @@ static int test_product_ux(void)
         ok &= changed;
     }
     bad += check("all palettes: the knob turning is lifted in place, the others and the page stay", ok);
-    bad += check("SAMPLE and SLICE retired from selectors with reserved stored IDs",!eng_ok(4) && !eng_ok(13) && !ENGINES[4]->npresets && !ENGINES[13]->npresets);
+    bad += check("SAMPLE and SLICE retired from selectors with reserved stored IDs",!eng_ok(4) && !ENGINES[4]->npresets && (MELODEE_OBV ? eng_ok(13) : (!eng_ok(13) && !ENGINES[13]->npresets)));   /* (13: SLICE, reused by OBERVAVE) */
     ui_power_on(); return bad;
 }
 

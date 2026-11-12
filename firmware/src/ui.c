@@ -913,6 +913,15 @@ static uint32_t preset_rank(const engine_t *e, uint32_t k) { (void)e; return k; 
 
 
 /* preset pi of the engine the track asked for: the sound only (not the steps, not param_kept) */
+#include "atmos_state.h"
+/* OBERVAVE plays alone: whatever loads it on the selected track puts the mode back to SINGLE */
+static void atmos_single_only(track_t *t)
+{
+    if (t == TSEL && atmos.mode != ATMOS_SINGLE) {
+        atmos.mode = ATMOS_SINGLE;
+        ui_message("OBERVAVE: SINGLE ONLY");
+    }
+}
 static void apply_preset_to(track_t *t, uint32_t pi)
 {
     const engine_t *e = ENGINES[t->eng_req % NENGINES];
@@ -942,6 +951,10 @@ static void apply_preset_to(track_t *t, uint32_t pi)
     t->p[P_ED_FLT] = pr->fenv;
     t->p[P_VOICE] = pr->mono ? V_LEGATO : V_POLY;   /* mono presets keep the legato feel */
     if(t->eng_req==ENGI_PROPHET)p5_preset_loaded(t,pi);
+    if (MELODEE_OBV && t->eng_req == ENGI_OBV) {
+        obv_preset_loaded(t, pi);
+        atmos_single_only(t);                           /* (OBERVAVE plays alone: ui_input.c) */
+    }
     cz_factory_loaded(t);
     cz_track_accept(t);
     fm6_track_loaded(t);                              /* FM6: the preset's patch */
@@ -964,7 +977,7 @@ static void engine_load_of(track_t *t, uint32_t ei, uint32_t pi)
     load_end(t);
 }
 /* the engine's defaults and its first preset (PROPHET: Sequential's first factory program, not INIT) */
-static void set_engine_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, ei % NENGINES == ENGI_PROPHET ? 1u : 0u); }
+static void set_engine_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, ei % NENGINES == ENGI_PROPHET || (MELODEE_OBV && ei % NENGINES == ENGI_OBV) ? 1u : 0u); }
 
 /* the engine's own starting point, nothing changed: its INIT preset (Prophet, CZ-1, SID, FM6: "INIT .."), else
  * its first (DRUM: the 808 kit) */

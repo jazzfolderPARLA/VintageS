@@ -17,6 +17,9 @@
 #include "eng_drum.c"           /* DRUM: synthesized 808 circuits (drum_808.c) */
 #include "eng_noise.c"
 #include "eng_fm6.c"            /* FM6: 6-operator FM rendered as Dexed renders it (fm6_core.c) */
+#if MELODEE_OBV
+#include "eng_obv.c"            /* OBERVAVE: the engine of OberVave (zvenson/obervave, GPL-3.0-only) */
+#endif
 #if MELODEE_SLICE
 #include "eng_slice.c"
 #else
@@ -64,6 +67,9 @@ static uint32_t eng_state_size(uint32_t e)
 #if MELODEE_SLICE
     case ENGI_SLICE: return sizeof(slc_rb_t);
 #endif
+#if MELODEE_OBV
+    case ENGI_OBV: return sizeof(obv_part_t);
+#endif
     default: return 0;
     }
 }
@@ -85,6 +91,9 @@ static fm6_part_t *fm6_part(uint32_t part) { return resource_get(RES_ENGINE0 + p
 static jn_part_t *jn_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(jn_part_t)); }
 static cz_part_t *cz_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(cz_part_t)); }
 static sid_part_t *sid_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(sid_part_t)); }
+#if MELODEE_OBV
+static obv_part_t *obv_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(obv_part_t)); }
+#endif
 #if MELODEE_PROPHET
 static p5_part_t *p5_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(p5_part_t)); }
 #endif
@@ -141,6 +150,8 @@ static const engine_t *const ENGINES[NENGINES] = {
     &ENG_FM6,                    /* 12 (ENGI_FM6) */
 #if MELODEE_SLICE
     &ENG_SLICE,                  /* 13 (ENGI_SLICE) */
+#elif MELODEE_OBV
+    &ENG_OBV,                    /* 13 (ENGI_OBV): OBERVAVE, on SLICE's retired index */
 #else
     &ENG_RETIRED,             /* 13: reserved (MELODEE_SLICE=0 builds without SLICE) */
 #endif
@@ -184,6 +195,9 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
     ENGI_CZ, 3,                   /* CZ-1 SID */
 #endif
     ENGI_JUNO,                   /* JUNO-106 */
+#if MELODEE_OBV
+    ENGI_OBV,                    /* OBERVAVE */
+#endif
 #if MELODEE_SLICE
     13,                          /* SLICE */
 #endif
@@ -202,7 +216,7 @@ static int eng_extra_retired(uint32_t e)
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
 static int eng_ok(uint32_t e)
 {
-    return e < NENGINES && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != ENGI_DRUM && (MELODEE_SLICE || e != ENGI_SLICE);
+    return e < NENGINES && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != ENGI_DRUM && (MELODEE_SLICE || MELODEE_OBV || e != ENGI_SLICE);
 }
 static uint32_t eng_sound_idx(uint32_t e)
 {

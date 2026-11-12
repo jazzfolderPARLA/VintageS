@@ -458,7 +458,7 @@ static void up_set_name(up_rec_t *r, uint32_t k, const char *name)
 static int up_store(uint32_t k, const char *name)
 {
     momentary_restore();
-    if (k >= UP_SLOTS || TSEL->eng_req == ENGI_PROPHET) return 1;
+    if (k >= UP_SLOTS || TSEL->eng_req == ENGI_PROPHET || (MELODEE_OBV && TSEL->eng_req == ENGI_OBV)) return 1;
     up_rec_t r;
     uint32_t i;
     memset(&r, 0, sizeof r);

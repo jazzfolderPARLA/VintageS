@@ -48,10 +48,17 @@
 #define USER_NONE 256u
 #define ENGI_ANALOG 0u           /* retired in 1.2: never selectable (eng_ok), its stored sounds play silent */
 #define ENGI_DIGITAL 1u          /* retired: never selectable (eng_ok), its stored sounds play silent */
-#define NENG_SHOWN (NENGINES - 8u - !MELODEE_SLICE - 6u * !MELODEE_LEGACY_EXTRAS)   /* the engines one can pick: PRESETS, the EDIT
+#define NENG_SHOWN (NENGINES - 8u - !MELODEE_SLICE - 6u * !MELODEE_LEGACY_EXTRAS + MELODEE_OBV)   /* the engines one can pick: PRESETS, the EDIT
                                                 * layer, the editor, in the display order of engines.c ENGINE_ORDER */
 #define ENGI_JUNO 14u            /* ATMOS: the Juno-106 (eng_juno.c) on OBXF's retired index */
 #define ENGI_SLICE 13u           /* reserved without MELODEE_SLICE: never selectable (eng_ok) */
+#ifndef MELODEE_OBV
+#define MELODEE_OBV 1            /* the OBERVAVE engine (eng_obv.c, bank E): on the retired SLICE's index */
+#endif
+#if MELODEE_OBV && MELODEE_SLICE
+#error "OBERVAVE and SLICE share engine index 13"
+#endif
+#define ENGI_OBV 13u
 #ifdef SMP_USER_SLOTS
 #undef SMP_USER_SLOTS
 #endif
