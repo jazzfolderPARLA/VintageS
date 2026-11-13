@@ -7,7 +7,7 @@
  *
  *   byte  2 mode        never restored: power-on is always SINGLE (0 is written here)
  *   byte  3 split_point MIDI note 0..127: notes below it play layer B
- *   byte  4 bank        active bank of layer A (0 DX7, 1 PROPHET-5, 2 JUNO-106, 3 CZ/SID)
+ *   byte  4 bank        active bank of layer A (0 DX7, 1 PROPHET-5, 2 JUNO-106, 3 CZ/SID, 4 JUPITER 08 MINI, 5 OBERVAVE)
  *   byte  5 preset      active preset of layer A, 0..127 (shown as 1..128)
  *   byte  6 b_bank      bank of layer B
  *   byte  7 b_preset    preset of layer B, 0..127
@@ -22,8 +22,8 @@
 #include <stdint.h>                  /* (the firmware has no libc: no string.h, no memcmp / memcpy here) */
 
 enum { ATMOS_SINGLE, ATMOS_DUAL, ATMOS_SPLIT, ATMOS_NMODE };
-#define ATMOS_NBANK 5u                  /* A DX7, B PROPHET-5, C JUNO-106, D CZ / SID, E OBERVAVE */
-#define ATMOS_NSTORED 4u                /* the banks whose last sound is kept (favorites.factory[8] bytes 6..9; E starts at its first sound) */
+#define ATMOS_NBANK 6u                  /* A DX7, B PROPHET-5, C JUNO-106, D CZ / SID, E JUPITER 08 MINI, F OBERVAVE */
+#define ATMOS_NSTORED 4u                /* the banks whose last sound is kept (favorites.factory[8] bytes 6..9; E and F start at their first sound) */
 #define ATMOS_ENGI_SID 3u               /* the SID engine's number in engines.c ENGINES[] (no ENGI_ name): bank D with CZ-1 */
 #define ATMOS_NPRE  128u
 #define ATMOS_SPLIT_DEFAULT 60u          /* middle C */
@@ -37,7 +37,7 @@ typedef struct {
 } atmos_t;
 
 /* last[]: the first visit to a bank plays its first real sound (PROPHET and CZ-1 start with an INIT program at 0) */
-static atmos_t atmos = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1}};
+static atmos_t atmos = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1, 1}};
 
 #define ATMOS_ROW      8u                /* favorites.factory[ATMOS_ROW] */
 #define ATMOS_DATA     2u
@@ -47,7 +47,7 @@ static const uint8_t ATMOS_TAG[4] = {'A', 'T', 'M', 1};
 /* row: favorites.factory[ATMOS_ROW] of the stored record. Each value is checked on its own. */
 static void atmos_load(const uint8_t *row)
 {
-    atmos_t a = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1}};
+    atmos_t a = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1, 1}};
     uint32_t tag_ok = 1;
     for (uint32_t i = 0; i < sizeof ATMOS_TAG; i++)
         if (row[ATMOS_TAGPOS + i] != ATMOS_TAG[i])
