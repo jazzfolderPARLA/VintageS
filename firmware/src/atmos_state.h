@@ -7,7 +7,7 @@
  *
  *   byte  2 mode        never restored: power-on is always SINGLE (0 is written here)
  *   byte  3 split_point MIDI note 0..127: notes below it play layer B
- *   byte  4 bank        active bank of layer A (0 DX7, 1 PROPHET-5, 2 JUNO-106, 3 CZ/SID, 4 JUPITER 08 MINI, 5 OBERVAVE)
+ *   byte  4 bank        active bank of layer A (0 DX7, 1 PROPHET-5, 2 JUNO-106, 3 CZ/SID)
  *   byte  5 preset      active preset of layer A, 0..127 (shown as 1..128)
  *   byte  6 b_bank      bank of layer B
  *   byte  7 b_preset    preset of layer B, 0..127
@@ -15,13 +15,15 @@
  *   bytes 12..15        tag 'A','T','M',1: without it, or with a bad byte, that value takes its default
  * Power-on always starts in SINGLE mode: DUAL and SPLIT are never restored. The split point and layer B's
  * sound are remembered, so they are ready when the mode is turned on again.
- * MIDI channel and clock sync are NOT here: Melodee already keeps them (ext.glo, "GLO_KEPT"). */
+ * Clock sync is NOT here: Melodee keeps it (ext.glo, "GLO_KEPT"). The GLO page settings (sustain polarity, velocity curve,
+ * octave / semitone shift and MIDI channel of each layer) take row 8 bytes 2 (free: the mode is never kept), 26 and 27,
+ * and row 15 byte 25 (see atmos_x_pack). */
 #pragma once
 #include <stdint.h>                  /* (the firmware has no libc: no string.h, no memcmp / memcpy here) */
 
 enum { ATMOS_SINGLE, ATMOS_DUAL, ATMOS_SPLIT, ATMOS_NMODE };
-#define ATMOS_NBANK 6u                  /* A DX7, B PROPHET-5, C JUNO-106, D CZ / SID, E JUPITER 08 MINI, F OBERVAVE */
-#define ATMOS_NSTORED 4u                /* the banks whose last sound is kept (favorites.factory[8] bytes 6..9; E and F start at their first sound) */
+#define ATMOS_NBANK 5u                  /* A DX7, B PROPHET-5, C JUNO-106, D CZ / SID, E OBERVAVE */
+#define ATMOS_NSTORED 4u                /* the banks whose last sound is kept (favorites.factory[8] bytes 6..9; E starts at its first sound) */
 #define ATMOS_ENGI_SID 3u               /* the SID engine's number in engines.c ENGINES[] (no ENGI_ name): bank D with CZ-1 */
 #define ATMOS_NPRE  128u
 #define ATMOS_SPLIT_DEFAULT 60u          /* middle C */
@@ -35,7 +37,7 @@ typedef struct {
 } atmos_t;
 
 /* last[]: the first visit to a bank plays its first real sound (PROPHET and CZ-1 start with an INIT program at 0) */
-static atmos_t atmos = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1, 1}};
+static atmos_t atmos = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1}};
 
 #define ATMOS_ROW      8u                /* favorites.factory[ATMOS_ROW] */
 #define ATMOS_DATA     2u
@@ -45,14 +47,14 @@ static const uint8_t ATMOS_TAG[4] = {'A', 'T', 'M', 1};
 /* row: favorites.factory[ATMOS_ROW] of the stored record. Each value is checked on its own. */
 static void atmos_load(const uint8_t *row)
 {
-    atmos_t a = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1, 1}};
+    atmos_t a = {ATMOS_SINGLE, ATMOS_SPLIT_DEFAULT, 0, 0, 0, 0, {0, 1, 0, 1, 1}};
     uint32_t tag_ok = 1;
     for (uint32_t i = 0; i < sizeof ATMOS_TAG; i++)
         if (row[ATMOS_TAGPOS + i] != ATMOS_TAG[i])
             tag_ok = 0;
     if (tag_ok) {
         const uint8_t *d = row + ATMOS_DATA;
-        /* d[0], the mode, is ignored on purpose: power-on is always SINGLE */
+        /* d[0], the old mode byte, is ignored on purpose (power-on is always SINGLE): it holds GLO settings now */
         if (d[1] < 128u) a.split_point = d[1];
         if (d[2] < ATMOS_NBANK && d[3] < ATMOS_NPRE) { a.bank = d[2]; a.preset = d[3]; }
         if (d[4] < ATMOS_NBANK && d[5] < ATMOS_NPRE) { a.b_bank = d[4]; a.b_preset = d[5]; }
@@ -65,12 +67,60 @@ static void atmos_load(const uint8_t *row)
 static void atmos_save(uint8_t *row)
 {
     uint8_t *d = row + ATMOS_DATA;
-    d[0] = ATMOS_SINGLE; d[1] = atmos.split_point;   /* the mode is not kept */
+    d[1] = atmos.split_point;   /* the mode is not kept; byte 2 (d[0]) holds the GLO settings (atmos_x_pack) */
     d[2] = atmos.bank;  d[3] = atmos.preset;
     d[4] = atmos.b_bank; d[5] = atmos.b_preset;
     for (uint32_t i = 0; i < ATMOS_NSTORED; i++) d[6 + i] = atmos.last[i];
     for (uint32_t i = 0; i < sizeof ATMOS_TAG; i++)
         row[ATMOS_TAGPOS + i] = ATMOS_TAG[i];
+}
+
+
+/* GLO pages 2..4: device settings kept with the settings (settings_persist.c pack/unpack), not the project's.
+ *   sus_inv   sustain pedal polarity: 0 = "+" (CC64 >= 64 holds), 1 = "-" (inverted: CC64 < 64 holds)
+ *   vel       velocity curve of MIDI note-ons: 0 LINEAR, 1 SOFT, 2 HARD (0 = the default, as zeroed storage)
+ *   oct[l]    layer l octave shift -2..+2 (l 0 = A / main, 1 = B / secondary)
+ *   sem[l]    layer l semitone shift -12..+12 (added to the octave shift)
+ *   ch[l]     MIDI channel of layer l: 0 OMNI (all channels), 1..16 */
+static uint8_t atmos_sus_inv, atmos_vel;
+static int8_t atmos_oct[2], atmos_sem[2];
+static uint8_t atmos_ch[2];
+
+static inline int32_t atmos_shift_of(uint32_t layer) { return (int32_t)atmos_oct[layer & 1u] * 12 + (int32_t)atmos_sem[layer & 1u]; }
+/* does MIDI channel ch (0..15) reach layer l? */
+static inline uint32_t atmos_ch_ok(uint32_t layer, uint32_t ch) { uint32_t c = atmos_ch[layer & 1u]; return !c || c == ch + 1u; }
+/* velocity curve: SOFT reaches loud values with a lighter touch, HARD needs a firmer one; never turns a note-on into 0 */
+static inline uint32_t atmos_vel_curve(uint32_t v)
+{
+    uint32_t r = v;
+    if (atmos_vel == 1u) r = v * (254u - v) / 127u;
+    else if (atmos_vel == 2u) r = v * v / 127u;
+    if (r < 1u) r = 1u;
+    return r > 127u ? 127u : r;
+}
+/* the 4 stored bytes (two-complement fields, 0 = default everywhere so old/blank storage keeps the defaults):
+ *   b0: ch A (bits 0..4) | sus_inv << 5 | vel << 6        b1: ch B (0..4) | oct A (5..7, signed)
+ *   b2: sem A (0..4, signed) | oct B (5..7, signed)       b3: sem B (0..4, signed) */
+static inline int32_t atmos_sx(uint32_t v, uint32_t bits) { return (int32_t)(v << (32u - bits)) >> (32u - bits); }
+static void atmos_x_unpack(const uint8_t *b)
+{
+    uint32_t cha = b[0] & 31u, chb = b[1] & 31u, vel = b[0] >> 6;
+    int32_t oa = atmos_sx(b[1] >> 5, 3), ob = atmos_sx(b[2] >> 5, 3), sa = atmos_sx(b[2] & 31u, 5), sb = atmos_sx(b[3] & 31u, 5);
+    atmos_ch[0] = (uint8_t)(cha <= 16u ? cha : 0u);
+    atmos_ch[1] = (uint8_t)(chb <= 16u ? chb : 0u);
+    atmos_sus_inv = (uint8_t)((b[0] >> 5) & 1u);
+    atmos_vel = (uint8_t)(vel < 3u ? vel : 0u);
+    atmos_oct[0] = (int8_t)(oa >= -2 && oa <= 2 ? oa : 0);
+    atmos_oct[1] = (int8_t)(ob >= -2 && ob <= 2 ? ob : 0);
+    atmos_sem[0] = (int8_t)(sa >= -12 && sa <= 12 ? sa : 0);
+    atmos_sem[1] = (int8_t)(sb >= -12 && sb <= 12 ? sb : 0);
+}
+static void atmos_x_pack(uint8_t *b)
+{
+    b[0] = (uint8_t)(atmos_ch[0] | (atmos_sus_inv & 1u) << 5 | (atmos_vel & 3u) << 6);
+    b[1] = (uint8_t)(atmos_ch[1] | ((uint32_t)atmos_oct[0] & 7u) << 5);
+    b[2] = (uint8_t)(((uint32_t)atmos_sem[0] & 31u) | ((uint32_t)atmos_oct[1] & 7u) << 5);
+    b[3] = (uint8_t)((uint32_t)atmos_sem[1] & 31u);
 }
 
 /* Which layers a key plays: bit 0 = layer A (the selected track), bit 1 = layer B.

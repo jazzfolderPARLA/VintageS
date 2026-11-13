@@ -142,7 +142,7 @@ static uint32_t scale_map(const track_t *t, int32_t n, int32_t offset)
     return (uint32_t)clamp(n + offset + t->p[P_TRANS], 0, 127);
 }
 
-static uint32_t kb_map(const track_t *t, uint32_t k)
+static uint32_t kb_map_raw(const track_t *t, uint32_t k)
 {
     const engine_t *e = ENGINES[eng_idx(t->eng_req)];   /* (the engine it switches to) */
     int32_t n;
@@ -163,10 +163,23 @@ static uint32_t kb_map(const track_t *t, uint32_t k)
     return scale_map(t, n, 12 * song.octave);
 }
 
+/* GLO > PITCH: the octave + semitone shift of layer A (the selected track) and layer B (the next one) is added to the note
+ * after the scale mapping (keys and MIDI alike); kits and slices (an engine's own key map) are not shifted. */
+static uint32_t atmos_shifted(const track_t *t, uint32_t n)
+{
+    uint32_t i = trk_index(t), a = song.sel % NTRK;
+    int32_t sh = i == a ? atmos_shift_of(0u) : i == atmos_b_track(a, NTRK) ? atmos_shift_of(1u) : 0;
+    const engine_t *e = ENGINES[eng_idx(t->eng_req)];
+    if (n == KB_SILENT || !sh || (e->keys && e->keys(t, 0) >= 0))
+        return n;
+    return (uint32_t)clamp((int32_t)n + sh, 0, 127);
+}
+static uint32_t kb_map(const track_t *t, uint32_t k) { return atmos_shifted(t, kb_map_raw(t, k)); }
+
 /* a MIDI note into track t: WHITE and ALL map it as the keys (without the octave buttons), MPC plays the 16 pads of
  * an MPC's Bank H (MIDI 20..35, H01..H16 of MPC Sample's default map; any other note is silent, kits too) as
  * successive degrees of the scale, pad H02 on degree DEG. Kits and slices keep their own note map. KB_SILENT: none */
-static uint32_t midi_map(const track_t *t, uint32_t note)
+static uint32_t midi_map_raw(const track_t *t, uint32_t note)
 {
     const engine_t *e = ENGINES[eng_idx(t->eng_req)];
     if (t->p[P_QUANT] == Q_MPC && (note < 20u || note > 35u))
@@ -181,6 +194,8 @@ static uint32_t midi_map(const track_t *t, uint32_t note)
         return micro_snap(t, (int32_t)note + t->p[P_TRANS]);
     return note;
 }
+
+static uint32_t midi_map(const track_t *t, uint32_t note) { return atmos_shifted(t, midi_map_raw(t, note)); }
 
 #include "chord.c"
 
@@ -1130,24 +1145,14 @@ static void seq_tick(track_t *t, uint32_t n)
     }
 }
 
-/* A range is a strict input filter, including the DRUM override. SEL keeps its stored value 1.
- * Return 0 for channels outside the range; releases keep their original owner. */
+/* ATMOS: layer A is the selected track, layer B the next one. SINGLE: every message plays A. DUAL / SPLIT: channels 0-7 are
+ * layer A, their shadows 8-15 layer B (midi_event). Which real MIDI channel reaches which layer is GLO > MIDI (atmos_ch,
+ * atmos_ch_ok: OMNI or 1..16), decided in midi_event before this. */
 static track_t *midi_track(uint32_t ch)
 {
-    uint32_t k, route = (uint32_t)song.g[G_ROUTE];
-    uint32_t first = route > 1u ? (route - 1u) * 4u : 0u;
-    if (atmos.mode != ATMOS_SINGLE)                /* ATMOS DUAL / SPLIT: channels 1-8 are layer A, their shadows 9-16 layer B */
-        return ch >= 8u ? &trk[atmos_b_track(song.sel % NTRK, NTRK)] : TSEL;
-    if (route != 1u && (ch < first || ch - first >= 4u))
-        return 0;
-    if (settings_drumch && ch + 1u == settings_drumch) {
-        for (k = 0; k < NPART; k++)
-            if (drum_track(&trk[k]))
-                return &trk[k];
-    }
-    if (route == 1u)
-        return TSEL;
-    return ch - first < NPART ? &trk[ch - first] : 0;
+    if (atmos.mode != ATMOS_SINGLE && ch >= 8u)
+        return &trk[atmos_b_track(song.sel % NTRK, NTRK)];
+    return TSEL;
 }
 
 #include "midi_control.c"

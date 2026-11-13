@@ -376,10 +376,6 @@ static void save_to(uint32_t k)
         ui_message("OBERVAVE: NO SAVE YET");            /* (its own preset record comes later) */
         return;
     }
-    if (MELODEE_JU08 && TSEL->eng_req == ENGI_JU08) {
-        ui_message("JUPITER-8: NO SAVE YET");           /* (its own preset record comes later) */
-        return;
-    }
     if (transport_busy()) {
         ui_message("STOP TO SAVE");
         return;
@@ -928,6 +924,19 @@ static void edit_param(uint32_t slot, int32_t steps)
         settings_save();
         return;
     }
+    if (pg->scope == SC_GLOBAL && pg->id[slot] >= G_SUSPOL && pg->id[slot] <= G_CH_B) {   /* GLO pages 2..4: device settings, saved */
+        uint32_t id = pg->id[slot];
+        if (id == G_SUSPOL) atmos_sus_inv = (uint8_t)(v != 0);
+        else if (id == G_VELCRV) atmos_vel = (uint8_t)(v == 0 ? 1u : v == 1 ? 0u : 2u);
+        else if (id == G_OCT_A) atmos_oct[0] = (int8_t)v;
+        else if (id == G_OCT_B) atmos_oct[1] = (int8_t)v;
+        else if (id == G_SEM_A) atmos_sem[0] = (int8_t)v;
+        else if (id == G_SEM_B) atmos_sem[1] = (int8_t)v;
+        else if (id == G_CH_A) atmos_ch[0] = (uint8_t)v;
+        else atmos_ch[1] = (uint8_t)v;
+        settings_save();
+        return;
+    }
     if (pg->scope == SC_GLOBAL && pg->id[slot] == G_DRUMCH) { /* DRUM: the device's too */
         settings_drumch = (uint8_t)v;
         settings_save();
@@ -1406,13 +1415,12 @@ static uint32_t btn_hold(uint32_t *t0, uint32_t label, uint32_t now, int hold_ok
     return tap ? BT_TAP : BT_NONE;
 }
 
-/* ATMOS banks, on the SCL button: A DX7 (the FM6 engine), B PROPHET-5, C JUNO-106, D CZ-1, E JUPITER 08 MINI, F OBERVAVE.
- * SCL tap: the next bank, with the sound it had last (atmos.last[]); SCL held: the sound list (PRESETS page).
+/* ATMOS banks, on the ARP button: A DX7 (the FM6 engine), B PROPHET-5, C JUNO-106, D CZ-1.
+ * ARP tap: the next bank, with the sound it had last (atmos.last[]); ARP held: the sound list (PRESETS page).
  * (A bank whose engine is 255 would be skipped by the tap; none is now.) */
-static const uint8_t ATMOS_BANK_ENGINE[ATMOS_NBANK] = {ENGI_FM6, ENGI_PROPHET, ENGI_JUNO, ENGI_CZ,
-                                                     MELODEE_JU08 ? ENGI_JU08 : 255u, MELODEE_OBV ? ENGI_OBV : 255u};   /* E: JUPITER-8, F: OBERVAVE (single only) */
-static const char *const ATMOS_BANK_NAME[ATMOS_NBANK] = {"A  DX7", "B  PROPHET-5", "C  JUNO-106", "D  CZ / SID", "E  JUPITER 08 MINI", "F  OBERVAVE"};
-static const char *const ATMOS_BANK_WORD[ATMOS_NBANK] = {"DX7", "PROPHET-5", "JUNO-106", "CZ / SID", "JUPITER 08 MINI", "OBERVAVE"};   /* Stage's card */
+static const uint8_t ATMOS_BANK_ENGINE[ATMOS_NBANK] = {ENGI_FM6, ENGI_PROPHET, ENGI_JUNO, ENGI_CZ, MELODEE_OBV ? ENGI_OBV : 255u};   /* E: OBERVAVE (single only) */
+static const char *const ATMOS_BANK_NAME[ATMOS_NBANK] = {"A  DX7", "B  PROPHET-5", "C  JUNO-106", "D  CZ / SID", "E  OBERVAVE"};
+static const char *const ATMOS_BANK_WORD[ATMOS_NBANK] = {"DX7", "PROPHET-5", "JUNO-106", "CZ / SID", "OBERVAVE"};   /* Stage's card */
 static const char *atmos_bank_word(uint32_t b) { return ATMOS_BANK_WORD[b % ATMOS_NBANK]; }
 static uint32_t atmos_bank_of(uint32_t e)
 {
@@ -1441,13 +1449,13 @@ static void atmos_bank_next(void)
     e = ATMOS_BANK_ENGINE[b];
     pi = atmos.last[b];
     if (pi >= ENGINES[e]->npresets)
-        pi = e == ENGI_PROPHET || e == ENGI_OBV || e == ENGI_JU08 ? 1u : 0u;   /* (Prophet, OBERVAVE, JUPITER-8: their first factory program, as set_engine_of) */
+        pi = e == ENGI_PROPHET || e == ENGI_OBV ? 1u : 0u;   /* (Prophet, OBERVAVE: their first factory program, as set_engine_of) */
     was = atmos.mode;
     engine_load_of(TSEL, e, pi);                        /* (OBERVAVE puts the mode back to SINGLE: atmos_single_only) */
     atmos.bank = (uint8_t)b;
     atmos.preset = (uint8_t)(pi < ATMOS_NPRE ? pi : 0u);
     ui_say("BANK ", ATMOS_BANK_NAME[b]);
-    if (atmos_solo_engine(e) && was != ATMOS_SINGLE)   /* OBERVAVE and JUPITER-8 play alone: no DUAL, no SPLIT */
+    if (MELODEE_OBV && e == ENGI_OBV && was != ATMOS_SINGLE)   /* OBERVAVE plays alone: no DUAL, no SPLIT */
         str_cpy(ui.msg2, "SINGLE ONLY", sizeof ui.msg2);
     ui.force = 1;
     settings_save();
@@ -1526,7 +1534,7 @@ static void atmos_b_bank_next(void)
     b = cur;
     for (n = 0; n < ATMOS_NBANK; n++) {
         b = (b + 1u) % ATMOS_NBANK;
-        if (ATMOS_BANK_ENGINE[b] != 255u && !atmos_solo_engine(ATMOS_BANK_ENGINE[b]))   /* (OBERVAVE and JUPITER-8 are never layer B) */
+        if (ATMOS_BANK_ENGINE[b] != 255u && ATMOS_BANK_ENGINE[b] != ENGI_OBV)   /* (OBERVAVE is never layer B) */
             break;
     }
     e = ATMOS_BANK_ENGINE[b];
@@ -2092,11 +2100,11 @@ static void ui_input(void)
     if (lytap)                                          /* a layer's button acts on release (held: the layer) */
         layer_tap(lytap);
     if (seq == BT_TAP) {                                /* ATMOS: SEQ tap: SINGLE -> DUAL -> SPLIT -> SINGLE */
-        uint32_t ea = TSEL->eng_req, eb = trk[atmos_b_track(song.sel % NTRK, NTRK)].eng_req;
         atmos_mode_next();
-        if (atmos.mode != ATMOS_SINGLE && (atmos_solo_engine(ea) || atmos_solo_engine(eb))) {
-            atmos.mode = ATMOS_SINGLE;                  /* OBERVAVE and JUPITER-8 play alone */
-            ui_message(atmos_solo_msg(atmos_solo_engine(ea) ? ea : eb));
+        if (MELODEE_OBV && atmos.mode != ATMOS_SINGLE &&
+            (TSEL->eng_req == ENGI_OBV || trk[atmos_b_track(song.sel % NTRK, NTRK)].eng_req == ENGI_OBV)) {
+            atmos.mode = ATMOS_SINGLE;                  /* OBERVAVE plays alone */
+            ui_message("OBERVAVE: SINGLE ONLY");
         } else if (atmos.mode == ATMOS_SPLIT)
             atmos_split_say();                          /* SPLIT and the split point (the ALGORITHM encoder moves it) */
         else
@@ -2106,7 +2114,7 @@ static void ui_input(void)
     if (scl == BT_TAP && ((fm1_in.buttons >> panel.btn[B_SEQ]) & 1u)) {   /* SEQ held + SCL: layer B's bank */
         ui.seq_t0 |= 2u;
         atmos_b_bank_next();
-    } else if (scl == BT_TAP)                           /* ATMOS: SCL tap: bank A -> B -> C -> D -> E -> F */
+    } else if (scl == BT_TAP)                           /* ATMOS: SCL tap: bank A -> B -> C -> D */
         atmos_bank_next();
     else if (scl == BT_HOLD)                            /* SCL held: the list of sounds */
         atmos_open_list();

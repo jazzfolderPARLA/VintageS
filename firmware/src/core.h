@@ -42,14 +42,13 @@
 #ifndef MELODEE_DRUM
 #define MELODEE_DRUM 0            /* the DRUM engine (808 / 909 kits): off in this build, hidden from every picker anyway */
 #endif
-#define NENGINES 22               /* 13 SLICE and 14 OBXF reserved; 15 native CZ-1; 20 is USER_NATIVE_P5's number (never an engine);
-                                  * 21 the Jupiter-8 */
+#define NENGINES 20               /* 13 SLICE and 14 OBXF reserved; 15 native CZ-1 */
 #define USER_NATIVE_FM 17u
 #define USER_NATIVE_CZ 18u
 #define USER_NONE 256u
 #define ENGI_ANALOG 0u           /* retired in 1.2: never selectable (eng_ok), its stored sounds play silent */
 #define ENGI_DIGITAL 1u          /* retired: never selectable (eng_ok), its stored sounds play silent */
-#define NENG_SHOWN (NENGINES - 10u - !MELODEE_SLICE - 6u * !MELODEE_LEGACY_EXTRAS + MELODEE_OBV + MELODEE_JU08)   /* the engines one can pick: PRESETS, the EDIT
+#define NENG_SHOWN (NENGINES - 8u - !MELODEE_SLICE - 6u * !MELODEE_LEGACY_EXTRAS + MELODEE_OBV)   /* the engines one can pick: PRESETS, the EDIT
                                                 * layer, the editor, in the display order of engines.c ENGINE_ORDER */
 #define ENGI_JUNO 14u            /* ATMOS: the Juno-106 (eng_juno.c) on OBXF's retired index */
 #define ENGI_SLICE 13u           /* reserved without MELODEE_SLICE: never selectable (eng_ok) */
@@ -60,10 +59,6 @@
 #error "OBERVAVE and SLICE share engine index 13"
 #endif
 #define ENGI_OBV 13u
-#ifndef MELODEE_JU08
-#define MELODEE_JU08 1           /* the JUPITER-8 engine (eng_ju08.c, bank E): appended at index 21 (20 is USER_NATIVE_P5's) */
-#endif
-#define ENGI_JU08 21u
 #ifdef SMP_USER_SLOTS
 #undef SMP_USER_SLOTS
 #endif
@@ -147,6 +142,16 @@ enum {                          /* global parameters */
     G_COUNT
 };
 static int param_master_fx(uint32_t id){return id>=G_MFXTYPE && id<=G_MFX3CHAR;}
+/* GLO pages 2..4 (device settings in atmos_state.h, shown by page_desc through cells like G_BOOT, never in a project: these ids
+ * stay reserved on the wire, global_reserved) */
+#define G_SUSPOL G_RESERVED4      /* sustain pedal polarity */
+#define G_VELCRV G_RESERVED5      /* velocity curve */
+#define G_OCT_A  G_RESERVED6      /* main layer octave shift */
+#define G_OCT_B  G_RESERVED7      /* secondary layer octave shift */
+#define G_SEM_A  G_RESERVED8      /* main layer semitone shift */
+#define G_SEM_B  G_RESERVED9      /* secondary layer semitone shift */
+#define G_CH_A   G_RESERVED10     /* main layer MIDI channel */
+#define G_CH_B   G_RESERVED11     /* secondary layer MIDI channel */
 #define G_DRLVL G_RESERVED25         /* (their meaning in a project from before 1.0: proj_drums_to_part) */
 #define G_DRREV G_RESERVED26
 

@@ -164,6 +164,7 @@ static void midi_note_event(uint32_t ch, uint32_t note, uint32_t vel)
         if (!t)
             return;
         midi_expression(t, c);
+        vel = atmos_vel_curve(vel);                 /* GLO velocity curve */
         if (!midi_play(t, ch, note, vel))           /* (a note the layout silences: no owner) */
             return;
         if (t != TSEL)
@@ -307,6 +308,8 @@ static void midi_control(uint32_t ch, uint32_t cc, uint32_t value)
         midi_pedal_up(ch);
         break;
     case 64:
+        if (atmos_sus_inv)                         /* GLO pedal polarity "-": pressed = low */
+            value = 127u - value;
         if (value >= 64u)
             c->pedal = 1;
         else
@@ -349,26 +352,33 @@ static void __attribute__((noinline)) midi_event_one(uint32_t st, uint32_t ch, u
 }
 
 /* ATMOS layers for MIDI in. Channel ch (1-8) plays layer A; its shadow channel ch + 8 plays layer B (seq.c midi_track), so
- * each layer keeps its own notes, pedal, bend and wheel with no new bookkeeping. SINGLE: as always, to A. DUAL: every
- * message goes to both. SPLIT: a note-on below the split point goes to B, from it up to A; everything else (note-offs,
- * pedal, bend, wheel) goes to both, and a layer that did not start a note ignores its note-off. Channels 9-16 count as
- * 1-8 in DUAL and SPLIT. */
+ * each layer keeps its own notes, pedal, bend and wheel with no new bookkeeping. GLO > MIDI picks which real channel
+ * reaches each layer (atmos_ch: OMNI or 1..16; both OMNI by default = as before). SINGLE: to A, if its channel matches.
+ * DUAL: every message goes to both layers whose channel matches. SPLIT: a note-on below the split point goes to B, from it up
+ * to A (each only if its channel matches); everything else goes to each matching layer, and a layer that did not start a note
+ * ignores its note-off. Releases (note-off, pedal up, all notes / sound off, reset) always reach both layers, so changing a
+ * channel while notes are held never leaves one stuck. Channels 9-16 count as 1-8 in DUAL and SPLIT. */
 static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
 {
+    uint32_t real = ch, onA = atmos_ch_ok(0u, real), onB = atmos_ch_ok(1u, real);
+    uint32_t rel = st == 0x80u || (st == 0x90u && !d2) ||
+                   (st == 0xB0u && ((d1 == 64u && (atmos_sus_inv ? d2 >= 64u : d2 < 64u)) || d1 == 120u || d1 == 121u || d1 == 123u));
     if (atmos.mode == ATMOS_SINGLE) {
-        midi_event_one(st, ch, d1, d2);
+        if (onA || rel)
+            midi_event_one(st, ch, d1, d2);
         return;
     }
     ch &= 7u;
     if (st == 0x90u && d2) {
-        if (atmos.mode == ATMOS_DUAL) {
+        uint32_t m = atmos_route(d1);               /* bit 0 layer A, bit 1 layer B */
+        if ((m & 1u) && onA)
             midi_event_one(st, ch, d1, d2);
+        if ((m & 2u) && onB)
             midi_event_one(st, ch | 8u, d1, d2);
-        } else {
-            midi_event_one(st, d1 < atmos.split_point ? (ch | 8u) : ch, d1, d2);
-        }
     } else {
-        midi_event_one(st, ch, d1, d2);
-        midi_event_one(st, ch | 8u, d1, d2);
+        if (onA || rel)
+            midi_event_one(st, ch, d1, d2);
+        if (onB || rel)
+            midi_event_one(st, ch | 8u, d1, d2);
     }
 }

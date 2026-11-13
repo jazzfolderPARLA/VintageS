@@ -94,6 +94,12 @@ static int settings_import(persist_t *p, int n)
     favorites.filter = 0;                               /* ATMOS: power-on with the whole list: the favourites view is REC's */
 #endif
     atmos_load(p->favorites.factory[ATMOS_ROW]);
+    {   /* GLO pages 2..4: sustain polarity, velocity curve, shifts, MIDI channels (each value validated on its own) */
+        uint8_t x[4];
+        x[0] = p->favorites.factory[ATMOS_ROW][ATMOS_DATA]; x[1] = p->favorites.factory[ATMOS_ROW][26];
+        x[2] = p->favorites.factory[ATMOS_ROW][27];         x[3] = p->favorites.factory[15][25];
+        atmos_x_unpack(x);
+    }
     panel = p->panel.magic == PANEL_MAGIC ? p->panel : PANEL_DEFAULT;
     return 1;
 }
@@ -115,6 +121,12 @@ static void settings_export(persist_t *p)
     p->ext.spare[0] = favorites_user_hi;
 #endif
     atmos_save(p->favorites.factory[ATMOS_ROW]);   /* after the favorites copy above: it would overwrite these bytes */
+    {
+        uint8_t x[4];
+        atmos_x_pack(x);
+        p->favorites.factory[ATMOS_ROW][ATMOS_DATA] = x[0]; p->favorites.factory[ATMOS_ROW][26] = x[1];
+        p->favorites.factory[ATMOS_ROW][27] = x[2];         p->favorites.factory[15][25] = x[3];
+    }
     memcpy(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
 #if MELODEE_USB_AUDIO
     p->ext.usb_off = ua_off;

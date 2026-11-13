@@ -773,8 +773,12 @@ static void pv_picture(void)
 /* ---------------------------------------------------------- MIXER --- */
 #define PV_STRIP_TOP 22                                 /* a strip: 54 x 212 at CARD_X(k), rows 22 .. 233 */
 #define PV_STRIP_ROWS 212
-#define PV_NSTRIP 2u                                    /* the MIXER shows tracks 1 and 2 only, on the middle two columns */
-#define PV_MX(k) CARD_X((k) + 1u)
+#define PV_NSTRIP 2u                                    /* the MIXER shows tracks 1 and 2 only, each on half the screen: */
+#define PV_SW 120                                       /* 120 px wide, edge to edge (no free space at the sides) */
+#define PV_MX(k) (PV_SW * (int32_t)(k))
+#define PV_LX 46                                        /* LEVEL knob centre x (in the strip) */
+#define PV_MTX 88                                       /* the meter's x (3 px wide) */
+#define PV_PX 60                                        /* PAN knob / REC dot centre x */
 static struct { uint32_t strip[NTRK]; uint8_t meter[NTRK]; } pvm;
 /* knob_arc as knob() draws it (a bipolar value from 12 o'clock), on bg */
 static void pv_knob(int32_t x, int32_t y, int32_t r, const uint8_t *cov, const uint8_t *ang, int32_t v, int32_t lo,
@@ -799,7 +803,7 @@ static void pv_meter(uint32_t k, uint16_t c)           /* track k's meter: 3 x 4
     cv_rrect(0, 0, 3, 44, 1, T_LINE, k == song.sel ? T_LIFT : T_PANEL);
     if (h > 0)
         cv_rrect(0, 44 - h, 3, h, 1, c, T_LINE);
-    cv_blit((uint32_t)(PV_MX(k) + 48), PV_STRIP_TOP + 50);
+    cv_blit((uint32_t)(PV_MX(k) + PV_MTX), PV_STRIP_TOP + 50);
 }
 static void pv_strip(uint32_t k)
 {
@@ -827,19 +831,19 @@ static void pv_strip(uint32_t k)
     }
     pvm.strip[k] = sig;
     pvm.meter[k] = (uint8_t)(m < 0 ? 0 : m);
-    cv_begin(CARD_W, PV_STRIP_ROWS, T_BG);
+    cv_begin(PV_SW, PV_STRIP_ROWS, T_BG);
     if (sel) {
-        cv_rrect(0, 0, CARD_W, PV_STRIP_ROWS, 6, T_TRK(k), T_BG);
-        cv_rrect(1, 1, CARD_W - 2, PV_STRIP_ROWS - 2, 5, bg, T_TRK(k));
+        cv_rrect(0, 0, PV_SW, PV_STRIP_ROWS, 6, T_TRK(k), T_BG);
+        cv_rrect(1, 1, PV_SW - 2, PV_STRIP_ROWS - 2, 5, bg, T_TRK(k));
     } else {
-        cv_rrect(0, 0, CARD_W, PV_STRIP_ROWS, 6, bg, T_BG);
+        cv_rrect(0, 0, PV_SW, PV_STRIP_ROWS, 6, bg, T_BG);
     }
-    cv_rect(3, 0, CARD_W - 6, 3, tc);                   /* the bar */
-    stage_two_lines(nm, l1, l2, CARD_W - 10);
-    cv_free_text(6, 7, &AF_S, l1, mute ? T_DIM : T_TEXT, bg, CARD_W - 8);
+    cv_rect(3, 0, PV_SW - 6, 3, tc);                   /* the bar */
+    stage_two_lines(nm, l1, l2, PV_SW - 10);
+    cv_free_text(6, 7, &AF_S, l1, mute ? T_DIM : T_TEXT, bg, PV_SW - 8);
     if (l2[0])
-        cv_free_text(6, 20, &AF_S, l2, mute ? T_DIM : T_TEXT, bg, CARD_W - 8);
-    pv_knob(27 - KNOB_LEVEL_R, 70 - KNOB_LEVEL_R, KNOB_LEVEL_R, KNOB_LEVEL_COV, KNOB_LEVEL_ANG, (int32_t)lvl, 0, 127,
+        cv_free_text(6, 20, &AF_S, l2, mute ? T_DIM : T_TEXT, bg, PV_SW - 8);
+    pv_knob(PV_LX - KNOB_LEVEL_R, 70 - KNOB_LEVEL_R, KNOB_LEVEL_R, KNOB_LEVEL_COV, KNOB_LEVEL_ANG, (int32_t)lvl, 0, 127,
             hot == 1u ? T_TEXT : tc, bg);
     if (lvl) {
         int32_t d = LEVEL_DB_X10[lvl];
@@ -847,12 +851,12 @@ static void pv_strip(uint32_t k)
     } else {
         str_cpy(b, "OFF", sizeof b);
     }
-    cv_text_c(27, 63, &AF_S, b, hot == 1u ? T_TEXT : mute ? T_DIM : T_TEXT, bg);
+    cv_text_c(PV_LX, 63, &AF_S, b, hot == 1u ? T_TEXT : mute ? T_DIM : T_TEXT, bg);
     if (lvl)
-        cv_text_c(27, 76, &AF_X, "dB", T_MID, bg);
-    cv_rrect(48, 50, 3, 44, 1, T_LINE, bg);             /* (the meter: pv_meter) */
-    cv_text_c(15, 104, &AF_X, "PAN", T_MID, bg);
-    pv_knob(15 - KNOB_SMALL_R, 130 - KNOB_SMALL_R, KNOB_SMALL_R, KNOB_SMALL_COV, KNOB_SMALL_ANG, pan, -64, 63,
+        cv_text_c(PV_LX, 76, &AF_X, "dB", T_MID, bg);
+    cv_rrect(PV_MTX, 50, 3, 44, 1, T_LINE, bg);             /* (the meter: pv_meter) */
+    cv_text_c(PV_PX, 104, &AF_X, "PAN", T_MID, bg);
+    pv_knob(PV_PX - KNOB_SMALL_R, 130 - KNOB_SMALL_R, KNOB_SMALL_R, KNOB_SMALL_COV, KNOB_SMALL_ANG, pan, -64, 63,
             hot == 2u ? T_TEXT : tc, bg);
     if (pan) {
         b[0] = pan < 0 ? 'L' : 'R';
@@ -860,14 +864,14 @@ static void pv_strip(uint32_t k)
     } else {
         str_cpy(b, "C", sizeof b);
     }
-    cv_text_c(15, 145, &AF_X, b, hot == 2u ? T_TEXT : T_SEC, bg);
+    cv_text_c(PV_PX, 145, &AF_X, b, hot == 2u ? T_TEXT : T_SEC, bg);
     if (arm)                                            /* armed: a REC dot, else its ring */
-        cv_disc(27, 198, 9, T_REC, 0);
+        cv_disc(PV_PX, 198, 9, T_REC, 0);
     else
-        cv_disc(27, 198, 9, T_DIM, 1);
+        cv_disc(PV_PX, 198, 9, T_DIM, 1);
     if (pvm.meter[k]) {
         int32_t h = pvm.meter[k] * 44 / (TS_MH - 2);
-        cv_rrect(48, 94 - h, 3, h, 1, tc, T_LINE);
+        cv_rrect(PV_MTX, 94 - h, 3, h, 1, tc, T_LINE);
     }
     cv_blit((uint32_t)PV_MX(k), PV_STRIP_TOP);
 }

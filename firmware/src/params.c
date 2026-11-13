@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Parameter descriptors, formatting and the page table. */
+#include "atmos_state.h"             /* the GLO page settings (atmos_sus_inv, atmos_vel, atmos_oct ..) */
 static const char *const N_LSYNC[] = {"OFF", "4BAR", "2BAR", "1/1", "1/2", "1/4", "1/8", "8T", "1/16", "16T", "1/32"};
 static const uint8_t LSYNC_DIV[11] = {0, 9, 8, 7, 6, 0, 1, 4, 2, 5, 3};
 static const char *const N_LWAVE[] = {"SIN", "TRI", "SAW", "SQR", "S&H"};
@@ -22,6 +23,10 @@ static const char *const N_ALLOC[] = {"ROT", "REUSE"};
 static const char *const N_ORDER[] = {"NOTE", "PLAY"};
 static const char *const N_CLOCK[] = {"INT", "USB", "TRS"};
 static const char *const N_MIDI_INPUT[] = {"USB", "TRS"};
+static const char *const N_SUSPOL[] = {"+", "-"};
+static const char *const N_VELCRV[] = {"SOFT", "LIN", "HARD"};   /* (knob order; atmos_vel: 1 SOFT, 0 LINEAR, 2 HARD) */
+static const char *const N_OCTSHIFT[] = {"-2", "-1", "0", "+1", "+2", 0};    /* (0-terminated: F_INT with names) */
+static const char *const N_MIDICH[] = {"OMNI", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"};
 static const char *const N_ROUTE[] = {"CH1-4", "SEL", "CH5-8", "CH9-12", "CH13-16"}; /* Keep saved CH1-4/SEL ids; append ranges. */
 static const char *const N_NOTE[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 static const char *const N_DASH[] = {"--"};
@@ -217,14 +222,14 @@ static const param_desc_t GP[G_COUNT] = {
     [G_SWING] = PD("SWG", F_PCT, 0, 100, 0),
     [G_CLOCK] = PE("CLK", N_CLOCK, 0),
     [G_TUNE] = PD("TUNE", F_INT, -50, 50, 0),
-    [G_RESERVED4] = PD("", F_INT, 0, 127, 0),
-    [G_RESERVED5] = PD("", F_INT, 0, 127, 0),
-    [G_RESERVED6] = PD("", F_INT, 0, 127, 0),
-    [G_RESERVED7] = PD("", F_INT, 0, 127, 0),
-    [G_RESERVED8] = PD("", F_INT, 0, 127, 0),
-    [G_RESERVED9] = PD("", F_INT, 0, 127, 0),
-    [G_RESERVED10] = PD("", F_INT, 0, 127, 0),
-    [G_RESERVED11] = PD("", F_INT, 0, 127, 0),
+    [G_SUSPOL] = PE("PEDAL", N_SUSPOL, 0),
+    [G_VELCRV] = PE("VELO", N_VELCRV, 1),
+    [G_OCT_A] = {"OCT 1", F_INT, -2, 2, 0, N_OCTSHIFT, "OCT"},
+    [G_OCT_B] = {"OCT 2", F_INT, -2, 2, 0, N_OCTSHIFT, "OCT"},
+    [G_SEM_A] = {"SEMI 1", F_SEMI, -12, 12, 0, 0, 0},
+    [G_SEM_B] = {"SEMI 2", F_SEMI, -12, 12, 0, 0, 0},
+    [G_CH_A] = PE("CH 1", N_MIDICH, 0),
+    [G_CH_B] = PE("CH 2", N_MIDICH, 0),
     [G_MIDI] = PE("MIDI", N_MIDI_INPUT, 0),
     [G_DRUMCH] = PE("DRUM", N_DRUMCH, 10),
     [G_ROUTE] = PE("ROUT", N_ROUTE, 0),          /* (was "--": stored 0 = CH1-4, as MIDI IN always was) */
@@ -568,8 +573,9 @@ static const page_t PAGES[] = {
     {"VOICE", FAM_EDIT, SC_TRACK, GR_NONE, {P_VOICE, P_GLIDE, P_GLMODE, P_PRIO}},
     {"VOICE 2", FAM_EDIT, SC_TRACK, GR_NONE, {P_ALLOC, P_DETUNE, P_PAN, P_MUTE}},
     {"VOICE 3", FAM_EDIT, SC_TRACK, GR_NONE, {P_SPRD, 0xFF, 0xFF, 0xFF}},
-    {"GLOBAL", FAM_GLO, SC_GLOBAL, GR_NONE, {G_A4, 0xFF, G_CLOCK, G_TUNE}},      /* A4 device reference; CLK/TUNE kept (GLO_KEPT) */
-    {"SYSTEM", FAM_GLO, SC_GLOBAL, GR_NONE, {G_MIDI, G_DRUMCH, G_ROUTE, G_INFO}},
+    {"GLOBAL", FAM_GLO, SC_GLOBAL, GR_NONE, {G_A4, G_SUSPOL, G_VELCRV, G_INFO}},   /* A4, sustain pedal polarity, velocity curve, CPU load (read only) */
+    {"PITCH", FAM_GLO, SC_GLOBAL, GR_NONE, {G_OCT_A, G_OCT_B, G_SEM_A, G_SEM_B}},  /* octave / semitone shift of the main and the secondary layer */
+    {"MIDI", FAM_GLO, SC_GLOBAL, GR_NONE, {G_CH_A, G_CH_B, 0xFF, 0xFF}},          /* MIDI channel of the main and the secondary layer (USB and TRS always on) */
     {"PRESETS", FAM_SAVE, SC_GLOBAL, GR_BROWSE, {0xFF, 0xFF, 0xFF, 0xFF}},   /* browser: KNOB 1 LIST, 2 / PRESETS the sounds */
     {"USER", FAM_SAVE, SC_GLOBAL, GR_USER, {0xFF, 0xFF, 0xFF, 0xFF}},       /* user presets: SLOT LOAD ERASE SAVE */
     {"PROJECT", FAM_SAVE, SC_GLOBAL, GR_SLOTS, {G_SLOT, G_BOOT, G_LOAD, G_SAVE}},
@@ -696,6 +702,17 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
     }
     if (pg->scope == SC_GLOBAL && id == G_A4) {
         *valp = &tuning_a4;
+        return global_desc(id);
+    }
+    if (pg->scope == SC_GLOBAL && (id == G_SUSPOL || id == G_VELCRV || id == G_OCT_A || id == G_OCT_B || id == G_SEM_A ||
+                                   id == G_SEM_B || id == G_CH_A || id == G_CH_B)) {   /* GLO pages 2..4: device settings (atmos_state.h) */
+        static int16_t glo_cell[4];
+        int16_t *c = &glo_cell[slot & 3u];
+        *c = (int16_t)(id == G_SUSPOL ? atmos_sus_inv : id == G_VELCRV ? (atmos_vel == 1u ? 0 : atmos_vel == 0u ? 1 : 2) :
+                       id == G_OCT_A ? atmos_oct[0] : id == G_OCT_B ? atmos_oct[1] :
+                       id == G_SEM_A ? atmos_sem[0] : id == G_SEM_B ? atmos_sem[1] :
+                       id == G_CH_A ? atmos_ch[0] : atmos_ch[1]);
+        *valp = c;
         return global_desc(id);
     }
     if (pg->scope == SC_GLOBAL && id == G_DRUMCH) {
