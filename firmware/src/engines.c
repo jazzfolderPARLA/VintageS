@@ -20,6 +20,11 @@
 #if MELODEE_OBV
 #include "eng_obv.c"            /* OBERVAVE: the engine of OberVave (zvenson/obervave, GPL-3.0-only) */
 #endif
+#if MELODEE_JU08
+#include "eng_ju08.c"           /* JUPITER-8 MINI: the Jupiter-8 port's voice (ju8_dsp.h, GPL-3.0-only) */
+#else
+static void j8_preset_loaded(track_t *t, uint32_t pi) { (void)t; (void)pi; }
+#endif
 #if MELODEE_SLICE
 #include "eng_slice.c"
 #else
@@ -70,6 +75,9 @@ static uint32_t eng_state_size(uint32_t e)
 #if MELODEE_OBV
     case ENGI_OBV: return sizeof(obv_part_t);
 #endif
+#if MELODEE_JU08
+    case ENGI_JU08: return sizeof(j8_part_t);
+#endif
     default: return 0;
     }
 }
@@ -93,6 +101,9 @@ static cz_part_t *cz_part(uint32_t part) { return resource_get(RES_ENGINE0 + par
 static sid_part_t *sid_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(sid_part_t)); }
 #if MELODEE_OBV
 static obv_part_t *obv_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(obv_part_t)); }
+#endif
+#if MELODEE_JU08
+static j8_part_t *j8_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(j8_part_t)); }
 #endif
 #if MELODEE_PROPHET
 static p5_part_t *p5_part(uint32_t part) { return resource_get(RES_ENGINE0 + part % NPART, sizeof(p5_part_t)); }
@@ -159,6 +170,12 @@ static const engine_t *const ENGINES[NENGINES] = {
     &ENG_CZ,                     /* 15: native Casio CZ-1 */
     &ENG_RETIRED, &ENG_RETIRED, &ENG_RETIRED, /* 16..18 reserved */
     &ENG_P5_TEST,                /* 19: Prophet (ANALOG's ID 0 stays reserved) */
+    &ENG_RETIRED,                /* 20: USER_NATIVE_P5's number (a library, never an engine): reserved */
+#if MELODEE_JU08
+    &ENG_JU08,                   /* 21 (ENGI_JU08): JUPITER-8 mini, ATMOS bank E */
+#else
+    &ENG_RETIRED,                /* 21: reserved (MELODEE_JU08 0) */
+#endif
 };
 
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
@@ -195,6 +212,9 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
     ENGI_CZ, 3,                   /* CZ-1 SID */
 #endif
     ENGI_JUNO,                   /* JUNO-106 */
+#if MELODEE_JU08
+    ENGI_JU08,                   /* JUPITER-8 mini */
+#endif
 #if MELODEE_OBV
     ENGI_OBV,                    /* OBERVAVE */
 #endif
@@ -216,7 +236,8 @@ static int eng_extra_retired(uint32_t e)
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
 static int eng_ok(uint32_t e)
 {
-    return e < NENGINES && !(e >= 16u && e <= 18u) && !eng_extra_retired(e) && e != 4u && e != 8u && e != ENGI_DRUM && (MELODEE_SLICE || MELODEE_OBV || e != ENGI_SLICE);
+    return e < NENGINES && !(e >= 16u && e <= 18u) && e != 20u && !eng_extra_retired(e) && e != 4u && e != 8u && e != ENGI_DRUM && (MELODEE_SLICE || MELODEE_OBV || e != ENGI_SLICE) &&
+           (MELODEE_JU08 || e != ENGI_JU08);
 }
 static uint32_t eng_sound_idx(uint32_t e)
 {

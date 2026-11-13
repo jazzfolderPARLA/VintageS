@@ -914,12 +914,15 @@ static uint32_t preset_rank(const engine_t *e, uint32_t k) { (void)e; return k; 
 
 /* preset pi of the engine the track asked for: the sound only (not the steps, not param_kept) */
 #include "atmos_state.h"
-/* OBERVAVE plays alone: whatever loads it on the selected track puts the mode back to SINGLE */
+/* OBERVAVE and JUPITER-8 play alone (one part each: their voices are heavy) */
+static int atmos_solo_engine(uint32_t e) { return (MELODEE_OBV && e == ENGI_OBV) || (MELODEE_JU08 && e == ENGI_JU08); }
+static const char *atmos_solo_msg(uint32_t e) { return e == ENGI_JU08 ? "JUPITER-8: SINGLE ONLY" : "OBERVAVE: SINGLE ONLY"; }
+/* whatever loads one of them on the selected track puts the mode back to SINGLE */
 static void atmos_single_only(track_t *t)
 {
     if (t == TSEL && atmos.mode != ATMOS_SINGLE) {
         atmos.mode = ATMOS_SINGLE;
-        ui_message("OBERVAVE: SINGLE ONLY");
+        ui_message(atmos_solo_msg(t->eng_req));
     }
 }
 static void apply_preset_to(track_t *t, uint32_t pi)
@@ -955,6 +958,10 @@ static void apply_preset_to(track_t *t, uint32_t pi)
         obv_preset_loaded(t, pi);
         atmos_single_only(t);                           /* (OBERVAVE plays alone: ui_input.c) */
     }
+    if (MELODEE_JU08 && t->eng_req == ENGI_JU08) {
+        j8_preset_loaded(t, pi);
+        atmos_single_only(t);                           /* (JUPITER-8 plays alone) */
+    }
     cz_factory_loaded(t);
     cz_track_accept(t);
     fm6_track_loaded(t);                              /* FM6: the preset's patch */
@@ -977,7 +984,7 @@ static void engine_load_of(track_t *t, uint32_t ei, uint32_t pi)
     load_end(t);
 }
 /* the engine's defaults and its first preset (PROPHET: Sequential's first factory program, not INIT) */
-static void set_engine_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, ei % NENGINES == ENGI_PROPHET || (MELODEE_OBV && ei % NENGINES == ENGI_OBV) ? 1u : 0u); }
+static void set_engine_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, ei % NENGINES == ENGI_PROPHET || (MELODEE_OBV && ei % NENGINES == ENGI_OBV) || (MELODEE_JU08 && ei % NENGINES == ENGI_JU08) ? 1u : 0u); }
 
 /* the engine's own starting point, nothing changed: its INIT preset (Prophet, CZ-1, SID, FM6: "INIT .."), else
  * its first (DRUM: the 808 kit) */
