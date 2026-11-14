@@ -88,6 +88,9 @@ static int settings_import(persist_t *p, int n)
     settings_preview = (uint8_t)((rp >> 6) & 1u);
     settings_chord_add = (uint8_t)((rp >> 7) & 1u);
     settings_hold = (uint8_t)hold_from_stored(p->bold);
+    /* AUDIO CLICK, CLICK LEVEL, COUNT-IN, NOTE PREVIEW, CHORD ENTRY and AUTOSAVE left the SYSTEM menu: always their defaults */
+    settings_click = 0; settings_click_level = 1; settings_countin = 0; settings_preview = 0; settings_chord_add = 0;
+    settings_autosave = 1;
 #ifdef MELODEE_FAVORITES
     memcpy(&favorites, &p->favorites, sizeof favorites);
     favorites_user_hi = p->ext.spare[0];
