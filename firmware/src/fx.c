@@ -22,6 +22,7 @@ typedef struct {
     uint16_t rev_pos[8], rev_span[8], rev_ap[8];
     int32_t rev_damp[8], rev_gain[8], rev_input, rev_input2, rev_l, rev_r, rev_prev_l, rev_prev_r;
     int32_t rev_bass[8];
+    int32_t rev_i3, rev_i4, rev_z3, rev_z4, rev_pl, rev_pr; /* ATMOS: 3rd/4th integrator + combs of the reverb decimator, output smoothing */
     int16_t rev_rate, rev_char;
     float rev_dc;
 } fx_state_t;
@@ -287,8 +288,9 @@ static __attribute__((noinline,section(".audio_text"))) void fx_chorus(fx_state_
     f->pos=pos;f->rev_l=l;f->rev_r=r;f->mix=mix;
 }
 /* Eight-line orthogonal feedback tank, preceded by four input diffusers and
- * followed by two allpasses per output. Runs at FS/8 with input low-pass and
- * interpolated wet output. 1900 int16 samples fit one 4 KiB allocation.
+ * followed by two allpasses per output. Runs at FS/8. ATMOS: the input uses a 4th-order
+ * CIC decimator (sinc^4, ~20-40 dB more alias rejection than the old 2nd-order one) and the
+ * interpolated wet output goes through a one-pole smoother that removes the 5.5 kHz images. 1900 int16 samples fit one 4 KiB allocation.
  * Unlike ROOM, the delays exchange energy and have length-normalised decay. */
 static const uint16_t REV_LEN[8] __attribute__((section(".data.fx_lengths")))={131,149,167,191,211,233,251,277};
 static const uint16_t REV_AP_LEN[8] __attribute__((section(".data.fx_lengths")))={23,31,43,61,19,29,37,47};
@@ -317,6 +319,19 @@ static inline __attribute__((always_inline)) int32_t fx_reverb_softclip(int32_t 
     if(i>=256)y=TANH_Q15[256];
     else y=TANH_Q15[i]+((TANH_Q15[i+1]-TANH_Q15[i])*(a&255)>>8);
     return x<0?-y:y;
+}
+/* ATMOS: wet limiter with a knee. The old softclip was a tanh from zero, so it bent every wet peak above ~10000 and made
+ * odd harmonics at the 5.5 kHz rate (they alias and image into the shrill sizzle). Linear to +-20000, tanh-curved after it,
+ * +-31570 at most. */
+static inline __attribute__((always_inline)) int32_t fx_reverb_knee(int32_t x)
+{
+    int32_t a=x<0?-x:x;
+    if(a>20000){
+        int32_t u=(a-20000)*175,i=u>>14,fr=(u>>6)&255,y;      /* (a - 20000) / 93.7 = tanh's argument in 1/128 steps */
+        if(i>=256)y=TANH_Q15[256];else y=TANH_Q15[i]+(((TANH_Q15[i+1]-TANH_Q15[i])*fr)>>8);
+        a=20000+((12000*y)>>15);
+    }
+    return x<0?-a:a;
 }
 static inline __attribute__((always_inline)) int32_t fx_reverb_ap(fx_state_t *f,int16_t *mem,uint32_t k,int32_t x,uint32_t off)
 {
@@ -348,20 +363,22 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
 {
     /* DEPTH retains more body on each round trip and raises the wet return.
      * Keep this work at FS/8: no additional delay memory or synth-rate DSP. */
-    int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo,difference=f->damp[0],low=f->damp[1];
+    int32_t a=f->rev_input,b=f->rev_input2,c3=f->rev_i3,c4=f->rev_i4,previous=f->echo,difference=f->damp[0],z3=f->rev_z3,z4=f->rev_z4,low=f->damp[1],pl=f->rev_pl,pr=f->rev_pr;
     uint32_t phase=f->decim;
-    int32_t mix=f->mix,tone=166+f->character*80/127,level=724+f->character*3;
+    int32_t mix=f->mix,tone=166+f->character*80/127,level=((724+f->character*3)*5)>>3; /* ATMOS: wet 4 dB lower, so loud chords stay in the linear zone */
     for(uint32_t i=0;i<n;i++){
         int32_t mono=fx_div_pow2(fx_left[i]+fx_right[i],1);
-        a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);
+        a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);c3=(int32_t)((uint32_t)c3+(uint32_t)b);c4=(int32_t)((uint32_t)c4+(uint32_t)c3);
         if(!phase){
-            uint32_t comb=(uint32_t)b-(uint32_t)previous;previous=b;
-            int32_t input=fx_div_pow2((int32_t)(comb-(uint32_t)difference),6);difference=(int32_t)comb;
+            uint32_t comb=(uint32_t)c4-(uint32_t)previous;previous=c4;
+            uint32_t comb2=comb-(uint32_t)difference;difference=(int32_t)comb;
+            uint32_t comb3=comb2-(uint32_t)z3;z3=(int32_t)comb2;
+            int32_t input=fx_div_pow2((int32_t)(comb3-(uint32_t)z4),12);z4=(int32_t)comb3;   /* sinc^4 /8^4 */
             low=fx_div_pow2(low+7*input,3);input=low;
             /* Cheap rate-conversion compensation restores upper-mid body
              * without increasing the bass return or allocating another filter. */
             int32_t previous_input=f->damp[2];f->damp[2]=input;
-            input+=fx_div_pow2(input-previous_input,2);
+            input+=fx_div_pow2(input-previous_input,1); /* the sinc^4 droops more: shelf 1/4 -> 1/2 */
             int32_t v[8],x;uint32_t off=0;
             f->rev_dc+=((float)input-f->rev_dc)*0.006f;
             x=fx_limit(fx_div_pow2((int32_t)((float)input-f->rev_dc),2),-16000,16000);
@@ -397,14 +414,15 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
             r=fx_reverb_ap(f,mem,6,r,off);off+=REV_AP_LEN[6];r=fx_reverb_ap(f,mem,7,r,off);
             /* Round only hot wet peaks; the dry signal remains untouched. */
             f->rev_prev_l=f->rev_l;f->rev_prev_r=f->rev_r;
-            f->rev_l=fx_reverb_softclip(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_softclip(fx_div_pow2(r*level,8));
+            f->rev_l=fx_reverb_knee(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_knee(fx_div_pow2(r*level,8));
         }
         int32_t l=f->rev_prev_l+fx_div_pow2((f->rev_l-f->rev_prev_l)*(phase+1u),3);
         int32_t r=f->rev_prev_r+fx_div_pow2((f->rev_r-f->rev_prev_r)*(phase+1u),3);
-        fx_return(target,0,0,i,l,r,&mix);
+        pl+=fx_div_pow2((l-pl)*3,3);pr+=fx_div_pow2((r-pr)*3,3);   /* ATMOS: smooth the linear interpolation (kills the 5.5 kHz images) */
+        fx_return(target,0,0,i,pl,pr,&mix);
         phase=(phase+1u)&7u;
     }
-    f->mix=mix;f->decim=(uint8_t)phase;f->rev_input=a;f->rev_input2=b;f->echo=previous;f->damp[0]=difference;f->damp[1]=low;
+    f->mix=mix;f->decim=(uint8_t)phase;f->rev_input=a;f->rev_input2=b;f->rev_i3=c3;f->rev_i4=c4;f->echo=previous;f->damp[0]=difference;f->rev_z3=z3;f->rev_z4=z4;f->damp[1]=low;f->rev_pl=pl;f->rev_pr=pr;
 }
 /* The filter inserts use a quarter-rate triangular decimator and pole,
  * independently per stereo side. Their Reverb histories are idle.
