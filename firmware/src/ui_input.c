@@ -856,7 +856,7 @@ static void edit_param(uint32_t slot, int32_t steps)
             select_engine(eng_step(TSEL->eng_req, steps));
         } else if (slot == 2u) {
             preset_mark(steps > 0);
-        } else if (slot == 0u) {                          /* ALL FAV RECENT, the categories (no wrap) */
+        } else if (slot == 0u && !list_bank_on()) {       /* ALL FAV RECENT, the categories (no wrap); not in the bank list */
             uint32_t m = (uint32_t)clamp((int32_t)list_mode() + (steps > 0 ? 1 : -1), 0, (int32_t)LM_N - 1);
             if (m != list_mode()) {
                 list_set(m);
@@ -1465,9 +1465,11 @@ static void atmos_bank_next(void)
     ui.force = 1;
     settings_save();
 }
-static void atmos_open_list(void)
+static void atmos_open_list(uint32_t bank)             /* bank: the sounds of the playing bank only (SCL held), else the list as LIST has it */
 {
     uint32_t k;
+    if (bank)
+        list_set(LM_ALL);                               /* never the favourites or a category (list_set also ends an old bank list) */
     for (k = 0; k < NPAGES; k++)
         if (PAGES[k].graph == GR_BROWSE)
             break;
@@ -1475,6 +1477,7 @@ static void atmos_open_list(void)
         return;
     ui.home = 0;
     ui.page = (uint8_t)k;
+    list_bank = (uint8_t)(bank != 0u);                  /* (browse.c) */
     ui.fam_last[PAGES[k].fam] = ui.page;
     page_entered();
     ui.force = 1;
@@ -1491,7 +1494,7 @@ static void atmos_fav_view(void)
         ui_message("FAVORITES OFF");
     } else {
         list_set(LM_FAV);
-        atmos_open_list();
+        atmos_open_list(0u);
         (void)list_cur(&total);
         ui_message(total ? "FAVORITES" : "NO FAVORITES YET");
     }
@@ -2121,8 +2124,8 @@ static void ui_input(void)
         atmos_b_bank_next();
     } else if (scl == BT_TAP)                           /* ATMOS: SCL tap: bank A -> B -> C -> D -> E -> F */
         atmos_bank_next();
-    else if (scl == BT_HOLD)                            /* SCL held: the list of sounds */
-        atmos_open_list();
+    else if (scl == BT_HOLD)                            /* SCL held: the sounds of the bank that is playing, nothing else */
+        atmos_open_list(1u);
     if (arp == BT_TAP)                                  /* ATMOS: ARP tap: the arpeggiator on / off */
         atmos_arp_toggle();
     else if (arp == BT_HOLD)                            /* ARP held: its page (mode, rate, octaves, gate) */
