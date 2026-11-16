@@ -420,7 +420,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
         }
         int32_t l=f->rev_prev_l+fx_div_pow2((f->rev_l-f->rev_prev_l)*(phase+1u),3);
         int32_t r=f->rev_prev_r+fx_div_pow2((f->rev_r-f->rev_prev_r)*(phase+1u),3);
-        f->rev_pl+=fx_div_pow2((l-f->rev_pl)*2,3);f->rev_pr+=fx_div_pow2((r-f->rev_pr)*2,3);   /* ATMOS: smooth the linear interpolation (kills the 5.5 kHz images) */
+        f->rev_pl+=fx_div_pow2((l-f->rev_pl)*3,3);f->rev_pr+=fx_div_pow2((r-f->rev_pr)*3,3);   /* ATMOS: smooth the linear interpolation (kills the 5.5 kHz images) */
         fx_return(target,0,0,i,f->rev_pl,f->rev_pr,&mix);
         phase=(phase+1u)&7u;
     }
