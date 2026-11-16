@@ -363,17 +363,19 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
 {
     /* DEPTH retains more body on each round trip and raises the wet return.
      * Keep this work at FS/8: no additional delay memory or synth-rate DSP. */
-    int32_t a=f->rev_input,b=f->rev_input2,c3=f->rev_i3,c4=f->rev_i4,previous=f->echo,difference=f->damp[0],z3=f->rev_z3,z4=f->rev_z4,low=f->damp[1],pl=f->rev_pl,pr=f->rev_pr;
+    int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo,difference=f->damp[0],low=f->damp[1];
+    /* ATMOS: the extra decimator/smoother state lives in f->, not in locals, so this SRAM kernel keeps the register pressure of the original
+     * (more live registers make the compiler call a ROM save/restore helper, which the build rejects). */
     uint32_t phase=f->decim;
     int32_t mix=f->mix,tone=166+f->character*80/127,level=((724+f->character*3)*5)>>3; /* ATMOS: wet 4 dB lower, so loud chords stay in the linear zone */
     for(uint32_t i=0;i<n;i++){
         int32_t mono=fx_div_pow2(fx_left[i]+fx_right[i],1);
-        a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);c3=(int32_t)((uint32_t)c3+(uint32_t)b);c4=(int32_t)((uint32_t)c4+(uint32_t)c3);
+        a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);f->rev_i3=(int32_t)((uint32_t)f->rev_i3+(uint32_t)b);f->rev_i4=(int32_t)((uint32_t)f->rev_i4+(uint32_t)f->rev_i3);
         if(!phase){
-            uint32_t comb=(uint32_t)c4-(uint32_t)previous;previous=c4;
+            uint32_t comb=(uint32_t)f->rev_i4-(uint32_t)previous;previous=f->rev_i4;
             uint32_t comb2=comb-(uint32_t)difference;difference=(int32_t)comb;
-            uint32_t comb3=comb2-(uint32_t)z3;z3=(int32_t)comb2;
-            int32_t input=fx_div_pow2((int32_t)(comb3-(uint32_t)z4),12);z4=(int32_t)comb3;   /* sinc^4 /8^4 */
+            uint32_t comb3=comb2-(uint32_t)f->rev_z3;f->rev_z3=(int32_t)comb2;
+            int32_t input=fx_div_pow2((int32_t)(comb3-(uint32_t)f->rev_z4),12);f->rev_z4=(int32_t)comb3;   /* sinc^4 /8^4 */
             low=fx_div_pow2(low+7*input,3);input=low;
             /* Cheap rate-conversion compensation restores upper-mid body
              * without increasing the bass return or allocating another filter. */
@@ -418,11 +420,11 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
         }
         int32_t l=f->rev_prev_l+fx_div_pow2((f->rev_l-f->rev_prev_l)*(phase+1u),3);
         int32_t r=f->rev_prev_r+fx_div_pow2((f->rev_r-f->rev_prev_r)*(phase+1u),3);
-        pl+=fx_div_pow2((l-pl)*3,3);pr+=fx_div_pow2((r-pr)*3,3);   /* ATMOS: smooth the linear interpolation (kills the 5.5 kHz images) */
-        fx_return(target,0,0,i,pl,pr,&mix);
+        f->rev_pl+=fx_div_pow2((l-f->rev_pl)*3,3);f->rev_pr+=fx_div_pow2((r-f->rev_pr)*3,3);   /* ATMOS: smooth the linear interpolation (kills the 5.5 kHz images) */
+        fx_return(target,0,0,i,f->rev_pl,f->rev_pr,&mix);
         phase=(phase+1u)&7u;
     }
-    f->mix=mix;f->decim=(uint8_t)phase;f->rev_input=a;f->rev_input2=b;f->rev_i3=c3;f->rev_i4=c4;f->echo=previous;f->damp[0]=difference;f->rev_z3=z3;f->rev_z4=z4;f->damp[1]=low;f->rev_pl=pl;f->rev_pr=pr;
+    f->mix=mix;f->decim=(uint8_t)phase;f->rev_input=a;f->rev_input2=b;f->echo=previous;f->damp[0]=difference;f->damp[1]=low;
 }
 /* The filter inserts use a quarter-rate triangular decimator and pole,
  * independently per stereo side. Their Reverb histories are idle.
