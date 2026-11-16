@@ -318,19 +318,6 @@ static inline __attribute__((always_inline)) int32_t fx_reverb_softclip(int32_t 
     else y=TANH_Q15[i]+((TANH_Q15[i+1]-TANH_Q15[i])*(a&255)>>8);
     return x<0?-y:y;
 }
-/* ATMOS: wet limiter with a knee. The old softclip was a tanh from zero, so it bent every wet peak above ~10000 and made
- * odd harmonics at the 5.5 kHz rate (they alias and image into the shrill sizzle). Linear to +-20000, tanh-curved after it,
- * +-31570 at most. */
-static inline __attribute__((always_inline)) int32_t fx_reverb_knee(int32_t x)
-{
-    int32_t a=x<0?-x:x;
-    if(a>20000){
-        int32_t u=(a-20000)*175,i=u>>14,fr=(u>>6)&255,y;      /* (a - 20000) / 93.7 = tanh's argument in 1/128 steps */
-        if(i>=256)y=TANH_Q15[256];else y=TANH_Q15[i]+(((TANH_Q15[i+1]-TANH_Q15[i])*fr)>>8);
-        a=20000+((12000*y)>>15);
-    }
-    return x<0?-a:a;
-}
 static inline __attribute__((always_inline)) int32_t fx_reverb_ap(fx_state_t *f,int16_t *mem,uint32_t k,int32_t x,uint32_t off)
 {
     uint32_t pos=f->rev_ap[k];int32_t delayed=mem[off+pos];
@@ -363,7 +350,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
      * Keep this work at FS/8: no additional delay memory or synth-rate DSP. */
     int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo,difference=f->damp[0],low=f->damp[1];
     uint32_t phase=f->decim;
-    int32_t mix=f->mix,tone=166+f->character*80/127,level=((724+f->character*3)*5)>>3;
+    int32_t mix=f->mix,tone=166+f->character*80/127,level=724+f->character*3;
     for(uint32_t i=0;i<n;i++){
         int32_t mono=fx_div_pow2(fx_left[i]+fx_right[i],1);
         a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);
@@ -410,7 +397,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
             r=fx_reverb_ap(f,mem,6,r,off);off+=REV_AP_LEN[6];r=fx_reverb_ap(f,mem,7,r,off);
             /* Round only hot wet peaks; the dry signal remains untouched. */
             f->rev_prev_l=f->rev_l;f->rev_prev_r=f->rev_r;
-            f->rev_l=fx_reverb_knee(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_knee(fx_div_pow2(r*level,8));
+            f->rev_l=fx_reverb_softclip(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_softclip(fx_div_pow2(r*level,8));
         }
         int32_t l=f->rev_prev_l+fx_div_pow2((f->rev_l-f->rev_prev_l)*(phase+1u),3);
         int32_t r=f->rev_prev_r+fx_div_pow2((f->rev_r-f->rev_prev_r)*(phase+1u),3);
@@ -490,7 +477,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_copy(fx_state_t *f
  * is past +-32767 and the clamp is the distortion heard in ECHO, ROOM, REVERB, TAPE... So the signal enters at half level through a
  * smooth knee (linear to +-52000, tanh-curved after it, about +-59700 at most) and leaves doubled (fx_atmos_out): the effects never see
  * more than +-29900, and nothing changes at normal levels. */
-static inline __attribute__((always_inline)) int32_t fx_atmos_in(int32_t x)
+static inline int32_t fx_atmos_in(int32_t x)
 {
     int32_t a=x<0?-x:x;
     if(a>52000){
@@ -501,7 +488,7 @@ static inline __attribute__((always_inline)) int32_t fx_atmos_in(int32_t x)
     a>>=1;
     return x<0?-a:a;
 }
-static inline __attribute__((always_inline)) void fx_atmos_out(uint32_t n)
+static void fx_atmos_out(uint32_t n)
 {
     for(uint32_t i=0;i<n;i++){fx_left[i]*=2;fx_right[i]*=2;}
 }
