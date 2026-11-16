@@ -497,7 +497,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_copy(fx_state_t *f
  * is past +-32767 and the clamp is the distortion heard in ECHO, ROOM, REVERB, TAPE... So the signal enters at half level through a
  * smooth knee (linear to +-52000, tanh-curved after it, about +-59700 at most) and leaves doubled (fx_atmos_out): the effects never see
  * more than +-29900, and nothing changes at normal levels. */
-static inline int32_t fx_atmos_in(int32_t x)
+static inline __attribute__((always_inline)) int32_t fx_atmos_in(int32_t x)   /* always inline: fx_pan sits in SRAM and a call to flash does not reach */
 {
     int32_t a=x<0?-x:x;
     if(a>52000){
@@ -508,7 +508,7 @@ static inline int32_t fx_atmos_in(int32_t x)
     a>>=1;
     return x<0?-a:a;
 }
-static void fx_atmos_out(uint32_t n)
+static inline __attribute__((always_inline)) void fx_atmos_out(uint32_t n)
 {
     for(uint32_t i=0;i<n;i++){fx_left[i]*=2;fx_right[i]*=2;}
 }
