@@ -156,21 +156,30 @@ static void melodee_init(void)
     ui.force = 1;
 }
 
-/* Boot splash: the VINTAGE MODULE cover (splash_img.h, 240 x 240, 64-colour palette). The LCD's DMA reads from RAM
- * only, so each row is expanded from the flash table into lcd_fillbuf (one row) and sent; the palette is already in the
+/* Boot splash: the VINTAGE MODULE cover (splash_img.h: 240 x 240, 32 colours, run-length coded, 12 KB). The LCD's DMA
+ * reads from RAM only, so each row is expanded into lcd_fillbuf (one row) and sent; the palette is already in the
  * panel's byte order. `sub` is kept for the callers (STARTING UP / LIVE PERFORMANCE) but the picture has no room for it. */
 #include "splash_img.h"
 static void splash_draw(const char *sub)
 {
-    uint32_t x, y;
+    const uint8_t *p = SPLASH_RLE;
+    uint32_t x, y, c = 0, left = 0;
     (void)sub;
     lcd_sync();
     lcd_window(0, 0, 239, 239);
     for (y = 0; y < 240u; y++) {
-        const uint8_t *row = SPLASH_IMG + y * 240u;
         lcd_sync();                               /* the previous row's DMA must finish before its buffer changes */
-        for (x = 0; x < 240u; x++)
-            lcd_fillbuf[x] = SPLASH_PAL[row[x]];
+        for (x = 0; x < 240u; x++) {
+            if (!left) {                          /* next run: colour << 3 | (n - 1); n - 1 = 7: 8 + the next byte */
+                uint32_t t = *p++;
+                c = t >> 3;
+                left = (t & 7u) + 1u;
+                if ((t & 7u) == 7u)
+                    left += *p++;
+            }
+            lcd_fillbuf[x] = SPLASH_PAL[c];
+            left--;
+        }
         lcd_data(lcd_fillbuf, 240u * 2u);
     }
 }
