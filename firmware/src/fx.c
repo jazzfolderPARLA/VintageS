@@ -257,7 +257,10 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_time(fx_state_t *r
             }
         }
         f->decim=(f->decim+1u)&3u;
-        fx_return(target,0,f->mono,i,f->echo,f->type==FX_ROOM?f->damp[1]+f->damp[3]:f->echo,&mix);
+        /* ATMOS: ECHO and ROOM run at FS/4 and held each wet sample for four: the images of 1-4 kHz (10-12 kHz) were the shrill sizzle.
+         * A one-pole low-pass at the full rate takes them down about 10 dB; the memories and their levels are unchanged. */
+        f->rev_pl+=fx_div_pow2((f->echo-f->rev_pl)*2,3);f->rev_pr+=fx_div_pow2(((f->type==FX_ROOM?f->damp[1]+f->damp[3]:f->echo)-f->rev_pr)*2,3);
+        fx_return(target,0,f->mono,i,f->rev_pl,f->rev_pr,&mix);
     }
     f->mix=mix;
 }
