@@ -1436,7 +1436,7 @@ static uint32_t atmos_bank_of(uint32_t e)
             return b;
     return 255u;
 }
-static void atmos_bank_next(void)
+static void atmos_bank_step(int32_t dir)               /* dir > 0: the next bank (A -> B ...), dir < 0: the previous one */
 {
     uint32_t cur = atmos_bank_of(TSEL->eng_req), b, n, e, pi, was;
     if (cur >= ATMOS_NBANK)
@@ -1445,7 +1445,7 @@ static void atmos_bank_next(void)
         atmos.last[cur] = (uint8_t)TSEL->preset;        /* the factory sound it leaves, for the way back */
     b = cur;
     for (n = 0; n < ATMOS_NBANK; n++) {
-        b = (b + 1u) % ATMOS_NBANK;
+        b = (b + (dir > 0 ? 1u : ATMOS_NBANK - 1u)) % ATMOS_NBANK;
         if (ATMOS_BANK_ENGINE[b] != 255u)
             break;
     }
@@ -1465,6 +1465,7 @@ static void atmos_bank_next(void)
     ui.force = 1;
     settings_save();
 }
+static void atmos_bank_next(void) { atmos_bank_step(1); }   /* SCL tap */
 static void atmos_open_list(uint32_t bank)             /* bank: the sounds of the playing bank only (SCL held), else the list as LIST has it */
 {
     uint32_t k;
@@ -2319,6 +2320,8 @@ static void ui_input(void)
         } else if (pattern_keys_on()) {                 /* ATMOS: SEQ held: SELECT does nothing (no patterns) */
             ui.seq_t0 |= 2u;
         } else if (step_gesture(s)) {                   /* ENV / SCL / a key held: the note's length, its place */
+        } else if (!ui.home && list_bank_on()) {        /* the bank's sound list (SCL held): SELECT changes the BANK, A B C D E F */
+            atmos_bank_step(s > 0 ? 1 : -1);
         } else if (!ui.home) {                          /* the section's pages (BPM: SEQ > TEMPO; the notes, the hits:
                                                          * KNOB 1) */
             page_scroll(s);
