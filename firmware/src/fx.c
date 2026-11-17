@@ -22,6 +22,7 @@ typedef struct {
     uint16_t rev_pos[8], rev_span[8], rev_ap[8];
     int32_t rev_damp[8], rev_gain[8], rev_input, rev_input2, rev_l, rev_r, rev_prev_l, rev_prev_r;
     int32_t rev_bass[8];
+    int32_t rev_i3, rev_i4, rev_z3, rev_z4, rev_pl, rev_pr; /* ATMOS: 3rd/4th integrator + combs of the reverb decimator, output smoothing */
     int16_t rev_rate, rev_char;
     float rev_dc;
 } fx_state_t;
@@ -256,7 +257,10 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_time(fx_state_t *r
             }
         }
         f->decim=(f->decim+1u)&3u;
-        fx_return(target,0,f->mono,i,f->echo,f->type==FX_ROOM?f->damp[1]+f->damp[3]:f->echo,&mix);
+        /* ATMOS: ECHO and ROOM run at FS/4 and held each wet sample for four: the images of 1-4 kHz (10-12 kHz) were the shrill sizzle.
+         * A one-pole low-pass at the full rate takes them down about 10 dB; the memories and their levels are unchanged. */
+        f->rev_pl+=fx_div_pow2((f->echo-f->rev_pl)*2,3);f->rev_pr+=fx_div_pow2(((f->type==FX_ROOM?f->damp[1]+f->damp[3]:f->echo)-f->rev_pr)*2,3);
+        fx_return(target,0,f->mono,i,f->rev_pl,f->rev_pr,&mix);
     }
     f->mix=mix;
 }
@@ -287,8 +291,9 @@ static __attribute__((noinline,section(".audio_text"))) void fx_chorus(fx_state_
     f->pos=pos;f->rev_l=l;f->rev_r=r;f->mix=mix;
 }
 /* Eight-line orthogonal feedback tank, preceded by four input diffusers and
- * followed by two allpasses per output. Runs at FS/8 with input low-pass and
- * interpolated wet output. 1900 int16 samples fit one 4 KiB allocation.
+ * followed by two allpasses per output. Runs at FS/8. ATMOS: the input uses a 4th-order
+ * CIC decimator (sinc^4, ~20-40 dB more alias rejection than the old 2nd-order one) and the
+ * interpolated wet output goes through a one-pole smoother that removes the 5.5 kHz images. 1900 int16 samples fit one 4 KiB allocation.
  * Unlike ROOM, the delays exchange energy and have length-normalised decay. */
 static const uint16_t REV_LEN[8] __attribute__((section(".data.fx_lengths")))={131,149,167,191,211,233,251,277};
 static const uint16_t REV_AP_LEN[8] __attribute__((section(".data.fx_lengths")))={23,31,43,61,19,29,37,47};
@@ -317,6 +322,19 @@ static inline __attribute__((always_inline)) int32_t fx_reverb_softclip(int32_t 
     if(i>=256)y=TANH_Q15[256];
     else y=TANH_Q15[i]+((TANH_Q15[i+1]-TANH_Q15[i])*(a&255)>>8);
     return x<0?-y:y;
+}
+/* ATMOS: wet limiter with a knee. The old softclip was a tanh from zero, so it bent every wet peak above ~10000 and made
+ * odd harmonics at the 5.5 kHz rate (they alias and image into the shrill sizzle). Linear to +-20000, tanh-curved after it,
+ * +-31570 at most. */
+static inline __attribute__((always_inline)) int32_t fx_reverb_knee(int32_t x)
+{
+    int32_t a=x<0?-x:x;
+    if(a>20000){
+        int32_t u=(a-20000)*175,i=u>>14,fr=(u>>6)&255,y;      /* (a - 20000) / 93.7 = tanh's argument in 1/128 steps */
+        if(i>=256)y=TANH_Q15[256];else y=TANH_Q15[i]+(((TANH_Q15[i+1]-TANH_Q15[i])*fr)>>8);
+        a=20000+((12000*y)>>15);
+    }
+    return x<0?-a:a;
 }
 static inline __attribute__((always_inline)) int32_t fx_reverb_ap(fx_state_t *f,int16_t *mem,uint32_t k,int32_t x,uint32_t off)
 {
@@ -349,19 +367,23 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
     /* DEPTH retains more body on each round trip and raises the wet return.
      * Keep this work at FS/8: no additional delay memory or synth-rate DSP. */
     int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo,difference=f->damp[0],low=f->damp[1];
+    /* ATMOS: the extra decimator/smoother state lives in f->, not in locals, so this SRAM kernel keeps the register pressure of the original
+     * (more live registers make the compiler call a ROM save/restore helper, which the build rejects). */
     uint32_t phase=f->decim;
-    int32_t mix=f->mix,tone=166+f->character*80/127,level=724+f->character*3;
+    int32_t mix=f->mix,tone=166+f->character*80/127,level=((724+f->character*3)*5)>>3; /* ATMOS: wet 4 dB lower, so loud chords stay in the linear zone */
     for(uint32_t i=0;i<n;i++){
         int32_t mono=fx_div_pow2(fx_left[i]+fx_right[i],1);
-        a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);
+        a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);f->rev_i3=(int32_t)((uint32_t)f->rev_i3+(uint32_t)b);f->rev_i4=(int32_t)((uint32_t)f->rev_i4+(uint32_t)f->rev_i3);
         if(!phase){
-            uint32_t comb=(uint32_t)b-(uint32_t)previous;previous=b;
-            int32_t input=fx_div_pow2((int32_t)(comb-(uint32_t)difference),6);difference=(int32_t)comb;
+            uint32_t comb=(uint32_t)f->rev_i4-(uint32_t)previous;previous=f->rev_i4;
+            uint32_t comb2=comb-(uint32_t)difference;difference=(int32_t)comb;
+            uint32_t comb3=comb2-(uint32_t)f->rev_z3;f->rev_z3=(int32_t)comb2;
+            int32_t input=fx_div_pow2((int32_t)(comb3-(uint32_t)f->rev_z4),12);f->rev_z4=(int32_t)comb3;   /* sinc^4 /8^4 */
             low=fx_div_pow2(low+7*input,3);input=low;
             /* Cheap rate-conversion compensation restores upper-mid body
              * without increasing the bass return or allocating another filter. */
             int32_t previous_input=f->damp[2];f->damp[2]=input;
-            input+=fx_div_pow2(input-previous_input,2);
+            input+=fx_div_pow2(input-previous_input,1); /* the sinc^4 droops more: shelf 1/4 -> 1/2 */
             int32_t v[8],x;uint32_t off=0;
             f->rev_dc+=((float)input-f->rev_dc)*0.006f;
             x=fx_limit(fx_div_pow2((int32_t)((float)input-f->rev_dc),2),-16000,16000);
@@ -397,11 +419,12 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
             r=fx_reverb_ap(f,mem,6,r,off);off+=REV_AP_LEN[6];r=fx_reverb_ap(f,mem,7,r,off);
             /* Round only hot wet peaks; the dry signal remains untouched. */
             f->rev_prev_l=f->rev_l;f->rev_prev_r=f->rev_r;
-            f->rev_l=fx_reverb_softclip(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_softclip(fx_div_pow2(r*level,8));
+            f->rev_l=fx_reverb_knee(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_knee(fx_div_pow2(r*level,8));
         }
         int32_t l=f->rev_prev_l+fx_div_pow2((f->rev_l-f->rev_prev_l)*(phase+1u),3);
         int32_t r=f->rev_prev_r+fx_div_pow2((f->rev_r-f->rev_prev_r)*(phase+1u),3);
-        fx_return(target,0,0,i,l,r,&mix);
+        f->rev_pl+=fx_div_pow2((l-f->rev_pl)*3,3);f->rev_pr+=fx_div_pow2((r-f->rev_pr)*3,3);   /* ATMOS: smooth the linear interpolation (kills the 5.5 kHz images) */
+        fx_return(target,0,0,i,f->rev_pl,f->rev_pr,&mix);
         phase=(phase+1u)&7u;
     }
     f->mix=mix;f->decim=(uint8_t)phase;f->rev_input=a;f->rev_input2=b;f->echo=previous;f->damp[0]=difference;f->damp[1]=low;
@@ -474,28 +497,29 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_copy(fx_state_t *f
 }
 /* ATMOS: gain staging of every track effect. The effects keep their audio in 16-bit memories (+-32767) and clamp hard there, but a
  * track reaches fx_left / fx_right up to +-65536 (the dry path is 6 dB lower after the master): a chord of the DX7 ROM or Juno voices
- * is past +-32767 and the clamp is the distortion heard in ECHO, ROOM, REVERB, TAPE... So the signal enters at half level through a
- * smooth knee (linear to +-52000, tanh-curved after it, about +-59700 at most) and leaves doubled (fx_atmos_out): the effects never see
- * more than +-29900, and nothing changes at normal levels. */
-static inline int32_t fx_atmos_in(int32_t x)
+ * is past +-32767 and the clamp is the distortion heard in ECHO, ROOM, REVERB, TAPE... So the signal enters at a quarter level through a
+ * smooth knee (linear to +-104000, tanh-curved after it, about +-119000 at most; the input is no longer hard-limited at +-65536) and
+ * leaves times four (fx_atmos_out): the effects never see more than +-29800, with twice the headroom of before, and the level is the
+ * same at normal levels. */
+static inline __attribute__((always_inline)) int32_t fx_atmos_in(int32_t x)   /* always inline: fx_pan sits in SRAM and a call to flash does not reach */
 {
     int32_t a=x<0?-x:x;
-    if(a>52000){
-        int32_t i=((a-52000)*262)>>14;                    /* (a - 52000) / 62.5: tanh's argument, 256 steps over 8000 */
+    if(a>104000){
+        int32_t i=((a-104000)*134)>>14;                   /* (a - 104000) / 122: tanh's argument, 256 steps over 31200 */
         if(i>256)i=256;
-        a=52000+((8000*(int32_t)TANH_Q15[i])>>15);
+        a=104000+((15600*(int32_t)TANH_Q15[i])>>15);      /* (about 119000 at most) */
     }
-    a>>=1;
+    a>>=2;
     return x<0?-a:a;
 }
-static void fx_atmos_out(uint32_t n)
+static inline __attribute__((always_inline)) void fx_atmos_out(uint32_t n)
 {
-    for(uint32_t i=0;i<n;i++){fx_left[i]*=2;fx_right[i]*=2;}
+    for(uint32_t i=0;i<n;i++){fx_left[i]*=4;fx_right[i]*=4;}
 }
 static __attribute__((noinline,section(".dsp_text"))) void fx_pan(track_t *t,int32_t *b,uint32_t n)
 {
     if(!spread_on){
-        for(uint32_t i=0;i<n;i++)fx_left[i]=fx_right[i]=fx_atmos_in(fx_limit(b[i],-65536,65536));
+        for(uint32_t i=0;i<n;i++)fx_left[i]=fx_right[i]=fx_atmos_in(fx_limit(b[i],-262143,262143));
         return;
     }
     int32_t pan=0,s=spread_on?(t->p[P_SPRD]+1)>>1:0;
@@ -504,7 +528,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_pan(track_t *t,int
     for(uint32_t i=0;i<n;i++){
         int32_t a=spread_on?spread_buf[i]:fx_div_pow2(b[i],1),c=b[i]-a;
         a=fx_limit(a,-262143,262143);c=fx_limit(c,-262143,262143);
-        fx_left[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gla+c*glb,12),-65536,65536));fx_right[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gra+c*grb,12),-65536,65536));
+        fx_left[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gla+c*glb,12),-262143,262143));fx_right[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gra+c*grb,12),-262143,262143));
     }
 }
 /* Position the finished track once. A mono engine stays mono through its
