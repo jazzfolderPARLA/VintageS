@@ -494,29 +494,28 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_copy(fx_state_t *f
 }
 /* ATMOS: gain staging of every track effect. The effects keep their audio in 16-bit memories (+-32767) and clamp hard there, but a
  * track reaches fx_left / fx_right up to +-65536 (the dry path is 6 dB lower after the master): a chord of the DX7 ROM or Juno voices
- * is past +-32767 and the clamp is the distortion heard in ECHO, ROOM, REVERB, TAPE... So the signal enters at a quarter level through a
- * smooth knee (linear to +-104000, tanh-curved after it, about +-119000 at most; the input is no longer hard-limited at +-65536) and
- * leaves times four (fx_atmos_out): the effects never see more than +-29800, with twice the headroom of before, and the level is the
- * same at normal levels. */
+ * is past +-32767 and the clamp is the distortion heard in ECHO, ROOM, REVERB, TAPE... So the signal enters at half level through a
+ * smooth knee (linear to +-52000, tanh-curved after it, about +-59700 at most) and leaves doubled (fx_atmos_out): the effects never see
+ * more than +-29900, and nothing changes at normal levels. */
 static inline __attribute__((always_inline)) int32_t fx_atmos_in(int32_t x)   /* always inline: fx_pan sits in SRAM and a call to flash does not reach */
 {
     int32_t a=x<0?-x:x;
-    if(a>104000){
-        int32_t i=((a-104000)*134)>>14;                   /* (a - 104000) / 122: tanh's argument, 256 steps over 31200 */
+    if(a>52000){
+        int32_t i=((a-52000)*262)>>14;                    /* (a - 52000) / 62.5: tanh's argument, 256 steps over 8000 */
         if(i>256)i=256;
-        a=104000+((15600*(int32_t)TANH_Q15[i])>>15);      /* (about 119000 at most) */
+        a=52000+((8000*(int32_t)TANH_Q15[i])>>15);
     }
-    a>>=2;
+    a>>=1;
     return x<0?-a:a;
 }
 static inline __attribute__((always_inline)) void fx_atmos_out(uint32_t n)
 {
-    for(uint32_t i=0;i<n;i++){fx_left[i]*=4;fx_right[i]*=4;}
+    for(uint32_t i=0;i<n;i++){fx_left[i]*=2;fx_right[i]*=2;}
 }
 static __attribute__((noinline,section(".dsp_text"))) void fx_pan(track_t *t,int32_t *b,uint32_t n)
 {
     if(!spread_on){
-        for(uint32_t i=0;i<n;i++)fx_left[i]=fx_right[i]=fx_atmos_in(fx_limit(b[i],-262143,262143));
+        for(uint32_t i=0;i<n;i++)fx_left[i]=fx_right[i]=fx_atmos_in(fx_limit(b[i],-65536,65536));
         return;
     }
     int32_t pan=0,s=spread_on?(t->p[P_SPRD]+1)>>1:0;
@@ -525,7 +524,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_pan(track_t *t,int
     for(uint32_t i=0;i<n;i++){
         int32_t a=spread_on?spread_buf[i]:fx_div_pow2(b[i],1),c=b[i]-a;
         a=fx_limit(a,-262143,262143);c=fx_limit(c,-262143,262143);
-        fx_left[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gla+c*glb,12),-262143,262143));fx_right[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gra+c*grb,12),-262143,262143));
+        fx_left[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gla+c*glb,12),-65536,65536));fx_right[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gra+c*grb,12),-65536,65536));
     }
 }
 /* Position the finished track once. A mono engine stays mono through its
