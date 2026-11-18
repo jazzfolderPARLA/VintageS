@@ -6,6 +6,11 @@
 #include "../hal/fm1_eq.h"
 #define FX_RATE (FS/4u)
 #define FX_REV_DIV 8u
+/* VINTAGE: output smoothing of the Reverb. 2 = two poles (cleanest), 1 = one pole, 0 = none. If the build ever complains about
+ * section overflow in .dsp_text, lower this number. */
+#ifndef FX_REV_SMOOTH
+#define FX_REV_SMOOTH 2
+#endif
 enum { FX_OFF, FX_PHASER, FX_WIDTH, FX_FORMANT, FX_TAPE, FX_SPIT, FX_ECHO, FX_ROOM, FX_REVERB, FX_CHORUS, FX_COUNT };
 typedef struct { float b0,b1,b2,a1,a2,z1,z2; } fx_bq_t;
 typedef struct {
@@ -299,7 +304,7 @@ static void fx_reverb_setup(fx_state_t *f)
     f->rev_rate=f->rate;f->rev_char=f->character;
     float decay=300.0f+(float)(f->character*f->character)*(5700.0f/(127.0f*127.0f));
     for(uint32_t k=0;k<8u;k++){
-        f->rev_span[k]=(uint16_t)((uint32_t)REV_LEN[k]*(64u+(uint32_t)f->rate)/191u);
+        f->rev_span[k]=(uint16_t)((uint32_t)REV_LEN[k]*(64u+(uint32_t)f->rate)/200u); /* VINTAGE: /200 (was /191): keeps >=4 samples of margin for the drift sweep; at SIZE max the read wrapped to a 1-4 sample delay */
         float x=6.907755f*(float)f->rev_span[k]*(1000.0f*FX_REV_DIV)/((float)FS*decay);
         f->rev_gain[k]=(int32_t)(65536.0f*(1.0f-x*0.5f)/(1.0f+x*0.5f));
     }
@@ -311,6 +316,18 @@ static inline __attribute__((always_inline)) int32_t fx_reverb_mul(int32_t x,uin
 }
 /* The existing softclip curve, inlined to avoid a SRAM-to-flash helper call
  * in the standard profile. No new lookup table or synth behavior. */
+/* VINTAGE: wet limiter with a knee: linear to +-20000, tanh-curved above (+-31570 at most). The plain softclip above bends every
+ * peak over ~10000, and those odd harmonics at the 5.5 kHz rate alias and image into the shrill sizzle. */
+static inline __attribute__((always_inline)) int32_t fx_reverb_knee(int32_t x)
+{
+    int32_t a=x<0?-x:x;
+    if(a>20000){
+        int32_t u=(a-20000)*175,i=u>>14,fr=(u>>6)&255,y;
+        if(i>=256)y=TANH_Q15[256];else y=TANH_Q15[i]+(((TANH_Q15[i+1]-TANH_Q15[i])*fr)>>8);
+        a=20000+((12000*y)>>15);
+    }
+    return x<0?-a:a;
+}
 static inline __attribute__((always_inline)) int32_t fx_reverb_softclip(int32_t x)
 {
     int32_t a=x<0?-x:x,i=a>>8,y;
@@ -350,7 +367,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
      * Keep this work at FS/8: no additional delay memory or synth-rate DSP. */
     int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo,difference=f->damp[0],low=f->damp[1];
     uint32_t phase=f->decim;
-    int32_t mix=f->mix,tone=166+f->character*80/127,level=724+f->character*3;
+    int32_t mix=f->mix,tone=90+f->character*60/127,level=((724+f->character*3)*3)>>2; /* VINTAGE: damping 90..150/256 (was 166..246); wet level 3/4 */
     for(uint32_t i=0;i<n;i++){
         int32_t mono=fx_div_pow2(fx_left[i]+fx_right[i],1);
         a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);
@@ -360,8 +377,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
             low=fx_div_pow2(low+7*input,3);input=low;
             /* Cheap rate-conversion compensation restores upper-mid body
              * without increasing the bass return or allocating another filter. */
-            int32_t previous_input=f->damp[2];f->damp[2]=input;
-            input+=fx_div_pow2(input-previous_input,2);
+            /* VINTAGE: edge shelf removed (it lifted the band edge, where alias residue and images live) */
             int32_t v[8],x;uint32_t off=0;
             f->rev_dc+=((float)input-f->rev_dc)*0.006f;
             x=fx_limit(fx_div_pow2((int32_t)((float)input-f->rev_dc),2),-16000,16000);
@@ -397,11 +413,22 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
             r=fx_reverb_ap(f,mem,6,r,off);off+=REV_AP_LEN[6];r=fx_reverb_ap(f,mem,7,r,off);
             /* Round only hot wet peaks; the dry signal remains untouched. */
             f->rev_prev_l=f->rev_l;f->rev_prev_r=f->rev_r;
-            f->rev_l=fx_reverb_softclip(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_softclip(fx_div_pow2(r*level,8));
+            f->rev_l=fx_reverb_knee(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_knee(fx_div_pow2(r*level,8));
         }
         int32_t l=f->rev_prev_l+fx_div_pow2((f->rev_l-f->rev_prev_l)*(phase+1u),3);
         int32_t r=f->rev_prev_r+fx_div_pow2((f->rev_r-f->rev_prev_r)*(phase+1u),3);
+#if FX_REV_SMOOTH>=2
+        /* VINTAGE: two-pole smoothing of the interpolated wet (removes the 5.5 kHz images). The states live in fields that are idle in
+         * Reverb mode, so the struct does not grow: damp[3]/random = first pole L/R, damp[2]/pos = second pole L/R. */
+        f->damp[3]+=fx_div_pow2((l-f->damp[3])*2,3);f->random+=fx_div_pow2((r-f->random)*2,3);
+        f->damp[2]+=fx_div_pow2((f->damp[3]-f->damp[2])*2,3);f->pos=(uint32_t)((int32_t)f->pos+fx_div_pow2((f->random-(int32_t)f->pos)*2,3));
+        fx_return(target,0,0,i,f->damp[2],(int32_t)f->pos,&mix);
+#elif FX_REV_SMOOTH==1
+        f->damp[3]+=fx_div_pow2((l-f->damp[3])*2,3);f->random+=fx_div_pow2((r-f->random)*2,3);
+        fx_return(target,0,0,i,f->damp[3],f->random,&mix);
+#else
         fx_return(target,0,0,i,l,r,&mix);
+#endif
         phase=(phase+1u)&7u;
     }
     f->mix=mix;f->decim=(uint8_t)phase;f->rev_input=a;f->rev_input2=b;f->echo=previous;f->damp[0]=difference;f->damp[1]=low;
