@@ -225,7 +225,7 @@ static voice_t *voice_alloc(track_t *t, uint32_t note)
             voice_room(t, 0);
         return v;
     }
-    if (t->engine == ENGI_DRUM) {
+    if (MELODEE_DRUM && t->engine == ENGI_DRUM) {
         voice_t *v = drum_reuse(t, note);
         if (v)
             return voice_reuse(t, v);
@@ -638,7 +638,7 @@ static __attribute__((noinline)) uint32_t track_render_audio(track_t *t, int32_t
     int32_t tune, tune_fine;
     int32_t bend, bend16, bend_fine;
     uint32_t ti = (uint32_t)(t - trk);
-    if (ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM) {
+    if (MELODEE_DRUM && ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM) {
         midi_bend_q8[ti] = midi_bend_target[ti] = 0;
     } else {
         int32_t d = midi_bend_target[ti] - midi_bend_q8[ti];

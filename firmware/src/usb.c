@@ -1,3 +1,4 @@
+#include "atmos_state.h"        /* ATMOS: midi_rx_usb, the header's MIDI dot */
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* USB full-speed device on USB0: a
@@ -138,8 +139,8 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
 #if MELODEE_USB_AUDIO
 #include "usb_audio_stream.c"
 #define CFG_LEN 411
-static const uint8_t DEV_DESC[18] = {18, 1, 0x00, 0x02, 0xEF, 0x02, 0x01, 64, 0x09, 0x12, 0x01, 0x00, 0x06, 0x03,
-                                     1, 2, 0, 1};        /* misc/IAD, bcdDevice 3.06: native 44.1 kHz only */
+static const uint8_t DEV_DESC[18] = {18, 1, 0x00, 0x02, 0xEF, 0x02, 0x01, 64, 0x09, 0x12, 0x01, 0x00, 0x07, 0x03,
+                                     1, 2, 0, 1};        /* misc/IAD, bcdDevice 3.07 (ATMOS: new names, hosts cache by version): native 44.1 kHz only */
 static const uint8_t CFG_DESC[] = {
     9, 2, 0x9B, 0x01, 6, 1, 0, 0x80, 50,                /* 411 bytes, six interfaces */
     8, 0x0B, 0, 2, 1, 1, 0, 0,                          /* IAD: MIDI (IF 0-1) */
@@ -197,12 +198,12 @@ static const uint8_t STR1[] = {26, 3, 'E', 0, 'l', 0, 'l', 0, 'i', 0, 'c', 0, ' 
 static const uint8_t STR2[] = {30, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0, 'U', 0, 'p', 0,
                                'd', 0, 'a', 0, 't', 0, 'e', 0};
 #else
-static const uint8_t STR2[] = {16, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0};
+static const uint8_t STR2[] = {18, 3, 'V', 0, 'i', 0, 'n', 0, 't', 0, 'a', 0, 'g', 0, 'e', 0, 'M', 0};   /* ATMOS: VintageM */
 #endif
 #if MELODEE_USB_AUDIO                                   /* the audio functions: host device names */
-static const uint8_t STR3[] = {24, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0, 'O', 0, 'u', 0,
-                               't', 0};
-static const uint8_t STR4[] = {22, 3, 'M', 0, 'e', 0, 'l', 0, 'o', 0, 'd', 0, 'e', 0, 'e', 0, ' ', 0, 'I', 0, 'n', 0};
+static const uint8_t STR3[] = {26, 3, 'V', 0, 'i', 0, 'n', 0, 't', 0, 'a', 0, 'g', 0, 'e', 0, 'M', 0, ' ', 0, 'O', 0, 'u', 0,
+                               't', 0};   /* ATMOS: VintageM Out */
+static const uint8_t STR4[] = {24, 3, 'V', 0, 'i', 0, 'n', 0, 't', 0, 'a', 0, 'g', 0, 'e', 0, 'M', 0, ' ', 0, 'I', 0, 'n', 0};   /* VintageM In */
 static uint8_t ua_cfg[sizeof CFG_DESC];                 /* the configuration as sent (usb_audio.c ua_cfg_build) */
 static uint16_t ua_cfg_len;
 #endif
@@ -609,6 +610,8 @@ static void sysex_byte(uint8_t b)
 static void midi_in_event(uint32_t pkt)
 {
     uint32_t cin = pkt & 15u, st = (pkt >> 8) & 0xFFu;
+    if (cin != 0xFu || st < 0xF8u)
+        midi_rx_usb++;                                  /* ATMOS: a message that counts (not clock / active sensing) */
     if (cin >= 4u && cin <= 7u) {
         uint32_t k, nb = cin == 4u || cin == 7u ? 3u : cin == 6u ? 2u : 1u;
         for (k = 0; k < nb; k++)
@@ -628,10 +631,8 @@ static void midi_in_event(uint32_t pkt)
         sx_collect = 0;
 #endif
     }
-    if (cin == 0xFu && (st == 0xFAu || st == 0xFBu || st == 0xFCu)) {   /* ATMOS: no 0xF8 clock */
-        midi_enqueue(0xFu | st << 8, 1u);
+    if (cin == 0xFu)                                    /* ATMOS: real-time bytes (clock, start / stop, active sensing) are dropped */
         return;
-    }
     if (cin >= 8u && cin <= 0xEu && (st >> 4) == cin && !((pkt >> 16) & 0x80u) &&
         ((cin == 0xCu || cin == 0xDu) || !(pkt & 0x80000000u))) {
         midi_enqueue(pkt, 1u);
