@@ -3,6 +3,8 @@
  * Banco DX7: 128 voces = ROM1A, ROM1B, ROM2A, ROM2B (32 cada una), en ese orden.
  * Cada registro son los 128 bytes empaquetados del bulk dump (sin cabecera ni checksum):
  * el mismo formato que FM6_PACKED, listo para fm6_unpack(). */
+#pragma once
+#include <stdint.h>
 #define DX7_ROM_N 128u
 static const uint8_t DX7_ROM[DX7_ROM_N][128] = {
     /*   1 ROM1A-01 BRASS   1 */ {
@@ -1286,3 +1288,137 @@ static const uint8_t DX7_ROM[DX7_ROM_N][128] = {
         0x63, 0x00, 0x00, 0x00, 0x70, 0x0C, 0x45, 0x58, 0x50, 0x4C, 0x4F, 0x53, 0x49, 0x4F, 0x4E, 0x20,
     },
 };
+
+/* FM6's preset table (eng_fm6.c): X(name, mono). BASS voices play MONO. */
+#define DX7_ROM_LIST(X) \
+    X("BRASS 1", 0) \
+    X("BRASS 2", 0) \
+    X("BRASS 3", 0) \
+    X("STRINGS 1", 0) \
+    X("STRINGS 2", 0) \
+    X("STRINGS 3", 0) \
+    X("ORCHESTRA", 0) \
+    X("PIANO 1", 0) \
+    X("PIANO 2", 0) \
+    X("PIANO 3", 0) \
+    X("E.PIANO 1", 0) \
+    X("GUITAR 1", 0) \
+    X("GUITAR 2", 0) \
+    X("SYN-LEAD 1", 0) \
+    X("BASS 1", 1) \
+    X("BASS 2", 1) \
+    X("E.ORGAN 1", 0) \
+    X("PIPES 1", 0) \
+    X("HARPSICH 1", 0) \
+    X("CLAV 1", 0) \
+    X("VIBE 1", 0) \
+    X("MARIMBA", 0) \
+    X("KOTO", 0) \
+    X("FLUTE 1", 0) \
+    X("ORCH-CHIME", 0) \
+    X("TUB BELLS", 0) \
+    X("STEEL DRUM", 0) \
+    X("TIMPANI", 0) \
+    X("REFS WHISL", 0) \
+    X("VOICE 1", 0) \
+    X("TRAIN", 0) \
+    X("TAKE OFF", 0) \
+    X("PIANO 4", 0) \
+    X("PIANO 5", 0) \
+    X("E.PIANO 2", 0) \
+    X("E.PIANO 3", 0) \
+    X("E.PIANO 4", 0) \
+    X("PIANO 5THS", 0) \
+    X("CELESTE", 0) \
+    X("TOY PIANO", 0) \
+    X("HARPSICH 2", 0) \
+    X("HARPSICH 3", 0) \
+    X("CLAV 2", 0) \
+    X("CLAV 3", 0) \
+    X("E.ORGAN 2", 0) \
+    X("E.ORGAN 3", 0) \
+    X("E.ORGAN 4", 0) \
+    X("E.ORGAN 5", 0) \
+    X("PIPES 2", 0) \
+    X("PIPES 3", 0) \
+    X("PIPES 4", 0) \
+    X("CALIOPE", 0) \
+    X("ACCORDION", 0) \
+    X("SITAR", 0) \
+    X("GUITAR 3", 0) \
+    X("GUITAR 4", 0) \
+    X("GUITAR 5", 0) \
+    X("GUITAR 6", 0) \
+    X("LUTE", 0) \
+    X("BANJO", 0) \
+    X("HARP 1", 0) \
+    X("HARP 2", 0) \
+    X("BASS 3", 1) \
+    X("BASS 4", 1) \
+    X("PICCOLO", 0) \
+    X("FLUTE 2", 0) \
+    X("OBOE", 0) \
+    X("CLARINET", 0) \
+    X("SAX BC", 0) \
+    X("BASSOON", 1) \
+    X("STRINGS 4", 0) \
+    X("STRINGS 5", 0) \
+    X("STRINGS 6", 0) \
+    X("STRINGS 7", 0) \
+    X("STRINGS 8", 0) \
+    X("BRASS 4", 0) \
+    X("BRASS 5", 0) \
+    X("BRASS 6 BC", 0) \
+    X("BRASS 7", 0) \
+    X("BRASS 8", 0) \
+    X("RECORDER", 0) \
+    X("HARMONICA1", 0) \
+    X("HRMNCA2 BC", 0) \
+    X("VOICE 2", 0) \
+    X("VOICE 3", 0) \
+    X("GLOKENSPL", 0) \
+    X("VIBE 2", 0) \
+    X("XYLOPHONE", 0) \
+    X("CHIMES", 0) \
+    X("GONG 1", 0) \
+    X("GONG 2", 0) \
+    X("BELLS", 0) \
+    X("COW BELL", 0) \
+    X("BLOCK", 0) \
+    X("FLEXATONE", 0) \
+    X("LOG DRUM", 0) \
+    X("SYN-LEAD 2", 0) \
+    X("SYN-LEAD 3", 0) \
+    X("SYN-LEAD 4", 0) \
+    X("SYN-LEAD 5", 0) \
+    X("SYN-CLAV 1", 0) \
+    X("SYN-CLAV 2", 0) \
+    X("SYN-CLAV 3", 0) \
+    X("SYN-PIANO", 0) \
+    X("SYNBRASS 1", 0) \
+    X("SYNBRASS 2", 0) \
+    X("SYNORGAN 1", 0) \
+    X("SYNORGAN 2", 0) \
+    X("SYN-VOX", 0) \
+    X("SYN-ORCH", 0) \
+    X("SYN-BASS 1", 1) \
+    X("SYN-BASS 2", 1) \
+    X("HARP-FLUTE", 0) \
+    X("BELL-FLUTE", 0) \
+    X("E.P-BRS BC", 0) \
+    X("T.BL-EXPA", 0) \
+    X("CHIME-STRG", 0) \
+    X("B.DRM-SNAR", 0) \
+    X("SHIMMER", 0) \
+    X("EVOLUTION", 0) \
+    X("WATER GDN", 0) \
+    X("WASP STING", 0) \
+    X("LASER GUN", 0) \
+    X("DESCENT", 0) \
+    X("OCTAVE WAR", 0) \
+    X("GRAND PRIX", 0) \
+    X("ST.HELENS", 0) \
+    X("EXPLOSION", 0)
+
+/* one category letter per voice, in browse.c's CAT_LETTER (B bass, K keys, ...) */
+#define DX7_ROM_CATS "RRRSSSSKKKKUULBBGOKKEEUWEEEDOPFOKKKKKKOKKKKKGGGGOOOOGUUUUUUUUUBBWWWWWBSSSSSRRRRROWOPPOEEEEEEEOODLLLLKKKKRRGGLSBBWEKOEOOOOOFOOOOF"
