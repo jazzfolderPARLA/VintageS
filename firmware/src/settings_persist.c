@@ -1,4 +1,5 @@
 #include "recording_preferences.h"
+#include "atmos_state.h"                  /* ATMOS: mode, split, banks (favorites.factory[8] bytes 2..15) */
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Portions Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
@@ -29,8 +30,7 @@ _Static_assert(sizeof(persist_t) == 604u, "the record's layout: new settings tak
 static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KEPT (glo_restore, glo_poll) */
 #define RECORD_PREF_TAG 0x52500000u /* RP, high half of the old zoom word */
 #define A4_TAG 0x41340000u                          /* "A4": old spare contents are not tuning */
-/* BEND 1 / 2 (settings_bend, 0..12 semitones, default 2): favorites.factory[15][25], a nibble each, stored as (range - 2) mod 16:
- * blank storage = 2, anything above 12 = 2 (byte 25 is free: CZ-1 native slots end at bit 192 = byte 24 bit 0) */
+/* BEND 1 / 2 (atmos_bend, 0..12 semitones, default 2) stored as (range - 2) mod 16: blank storage = 2, anything above 12 = 2 */
 static inline uint32_t bend_enc(uint32_t r) { return (r + 14u) & 15u; }
 static inline uint8_t bend_dec(uint32_t s) { uint32_t r = (s + 2u) & 15u; return (uint8_t)(r <= 12u ? r : 2u); }
 #define AUTOSAVE_OFF_TAG 0xA1u                     /* CZ row byte 28: only this tag disables autosave */
@@ -79,8 +79,6 @@ static int settings_import(persist_t *p, int n)
     p->palette = palette_to_stored(palette_from_stored(p->palette));
     settings_screen=p->favorites.factory[15][27] < 8u ? p->favorites.factory[15][27] : 0u;
     settings_autosave = p->favorites.factory[15][28] != AUTOSAVE_OFF_TAG;
-    settings_bend[0] = bend_dec(p->favorites.factory[15][25] & 15u);      /* BEND 1 / 2: byte 25, a nibble each */
-    settings_bend[1] = bend_dec(p->favorites.factory[15][25] >> 4);
     settings.magic = SETTINGS_MAGIC;
     settings.palette = palette_from_stored(p->palette);
     settings.lowcut = 0;
@@ -96,8 +94,18 @@ static int settings_import(persist_t *p, int n)
 #ifdef MELODEE_FAVORITES
     memcpy(&favorites, &p->favorites, sizeof favorites);
     favorites_user_hi = p->ext.spare[0];
-    favorites.filter = favorites.filter == 1u;
+    favorites.filter = 0;                               /* ATMOS: power-on with the whole list: the favourites view is REC's */
 #endif
+    atmos_load(p->favorites.factory[ATMOS_ROW]);
+    {   /* GLO pages 2..4: sustain polarity, velocity curve, shifts, MIDI channels (each value validated on its own) */
+        uint8_t x[4];
+        x[0] = p->favorites.factory[ATMOS_ROW][ATMOS_DATA]; x[1] = p->favorites.factory[ATMOS_ROW][26];
+        x[2] = p->favorites.factory[ATMOS_ROW][27];         x[3] = p->favorites.factory[15][25];
+        atmos_x_unpack(x);
+        uint32_t s = (uint32_t)(p->favorites.factory[15][24] >> 1) | (uint32_t)((p->favorites.factory[15][25] >> 5) & 1u) << 7;
+        atmos_bend[0] = bend_dec(s & 15u);                /* BEND 1 / 2: row 15 byte 24 bits 1..7 and byte 25 bit 5 */
+        atmos_bend[1] = bend_dec(s >> 4);
+    }
     panel = p->panel.magic == PANEL_MAGIC ? p->panel : PANEL_DEFAULT;
     return 1;
 }
@@ -118,6 +126,16 @@ static void settings_export(persist_t *p)
     memcpy(&p->favorites, &favorites, sizeof favorites);
     p->ext.spare[0] = favorites_user_hi;
 #endif
+    atmos_save(p->favorites.factory[ATMOS_ROW]);   /* after the favorites copy above: it would overwrite these bytes */
+    {
+        uint8_t x[4];
+        atmos_x_pack(x);
+        p->favorites.factory[ATMOS_ROW][ATMOS_DATA] = x[0]; p->favorites.factory[ATMOS_ROW][26] = x[1];
+        p->favorites.factory[ATMOS_ROW][27] = x[2];         p->favorites.factory[15][25] = x[3];
+        uint32_t s = bend_enc(atmos_bend[0]) | bend_enc(atmos_bend[1]) << 4;   /* BEND 1 / 2 (byte 24 bit 0 is a CZ-1 star: kept) */
+        p->favorites.factory[15][24] = (uint8_t)((p->favorites.factory[15][24] & 1u) | (s & 127u) << 1);
+        p->favorites.factory[15][25] = (uint8_t)((p->favorites.factory[15][25] & ~(1u << 5)) | ((s >> 7) & 1u) << 5);
+    }
     memcpy(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
 #if MELODEE_USB_AUDIO
     p->ext.usb_off = ua_off;
@@ -125,7 +143,6 @@ static void settings_export(persist_t *p)
 #endif
     p->favorites.factory[15][27]=settings_screen;
     p->favorites.factory[15][28] = settings_autosave ? 0u : AUTOSAVE_OFF_TAG;
-    p->favorites.factory[15][25] = (uint8_t)(bend_enc(settings_bend[0]) | bend_enc(settings_bend[1]) << 4);
     p->ext.boot = settings_boot;
     p->ext.drumch = settings_drumch == 10u ? 0u : !settings_drumch ? 17u : settings_drumch;
     p->ext.lights = settings_lights == LIGHTS_MID ? 0u : settings_lights + 1u;
