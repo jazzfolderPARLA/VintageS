@@ -1,0 +1,139 @@
+diff -u -r orig1/core.h s1/src/core.h
+--- orig1/core.h	2026-11-18 15:08:46.331786591 +0000
++++ s1/src/core.h	2026-11-18 15:08:46.389608060 +0000
+@@ -157,6 +157,8 @@
+ #define G_SEM_B  G_RESERVED9      /* secondary layer semitone shift */
+ #define G_CH_A   G_RESERVED10     /* main layer MIDI channel */
+ #define G_CH_B   G_RESERVED11     /* secondary layer MIDI channel */
++#define G_BEND_A G_RESERVED24     /* GLO MIDI page KNOB 3: pitch-bend range of track 1 (layer A), atmos_bend[0] */
++#define G_BEND_B G_RESERVED26     /* GLO MIDI page KNOB 4: pitch-bend range of track 2 (layer B), atmos_bend[1] */
+ #define G_DRLVL G_RESERVED25         /* (their meaning in a project from before 1.0: proj_drums_to_part) */
+ #define G_DRREV G_RESERVED26
+ 
+@@ -449,6 +451,9 @@
+ } song_t;
+ 
+ static track_t trk[NTRK];        /* the instrument: four parts */
++/* GLO > MIDI KNOB 3 / KNOB 4: pitch-bend range (+/- semitones, 0..12) of tracks 1 and 2 for every engine except
++ * PROPHET (its range is saved in the patch). A device setting (settings_persist.c), not song.g. */
++static uint8_t atmos_bend[2] = {2, 2};
+ static song_t song;
+ #define TSEL (&trk[song.sel])    /* the selected track */
+ 
+diff -u -r orig1/eng_fm6.c s1/src/eng_fm6.c
+--- orig1/eng_fm6.c	2026-11-18 15:08:46.332297839 +0000
++++ s1/src/eng_fm6.c	2026-11-18 15:08:46.392520513 +0000
+@@ -398,6 +398,7 @@
+     fm6_ctl_t *c = &P->pt;
+     uint32_t k, egs = 0;
+     int32_t raw = t->bend_raw, cc[4], m;
++    uint32_t ti = (uint32_t)(t - trk);
+     cc[0] = t->mw;
+     cc[1] = t->foot;
+     cc[2] = t->breath;
+@@ -418,6 +419,8 @@
+         c->emod = 127;
+     if (!raw) {                                          /* pitch bend */
+         c->pb = 0;
++    } else if (ti < 2u) {                                /* GLO > MIDI BEND 1 / 2: smooth, the same range up and down */
++        c->pb = fm6_f32(raw * 2048 * (int32_t)atmos_bend[ti]) / 12;
+     } else if (!FM6F(t)[FN_PBSTEP]) {
+         c->pb = fm6_f32(raw * 2048 * (raw > 0 ? FM6F(t)[FN_PBUP] : FM6F(t)[FN_PBDN])) / 12;
+     } else {
+diff -u -r orig1/midi_control.c s1/src/midi_control.c
+--- orig1/midi_control.c	2026-11-18 15:08:46.332979062 +0000
++++ s1/src/midi_control.c	2026-11-18 15:08:46.391943354 +0000
+@@ -52,6 +52,7 @@
+ {
+     int32_t range = ((int32_t)c->semis * 100 + c->cents) * 256 / 100;
+     if(t->eng_req==ENGI_PROPHET)range=(clamp(p5_patch_of(t)->raw[P5_BEND],0,11)+1)*256;
++    else if(trk_index(t)<2u)range=(int32_t)atmos_bend[trk_index(t)]*256;   /* GLO > MIDI BEND 1 / 2 */
+     if (drum_track(t))
+         return;
+     midi_bend_target[trk_index(t)] = (int32_t)c->bend * range / (c->bend < 0 ? 8192 : 8191);
+diff -u -r orig1/params.c s1/src/params.c
+--- orig1/params.c	2026-11-18 15:08:46.333627407 +0000
++++ s1/src/params.c	2026-11-18 15:08:46.390993020 +0000
+@@ -242,9 +242,9 @@
+     [G_A4] = {"A4", F_INT, A4_MIN, A4_MAX, A4_DEFAULT, 0, "Hz"},
+     [G_CLRSEQ] = PE("CLRSQ", N_GO, 0),
+     [G_INITSND] = PE("INIT", N_GO, 0),
+-    [G_RESERVED24] = PD("", F_INT, 0, 127, 0),
++    [G_RESERVED24] = {"BEND 1", F_INT, 0, 12, 2, 0, "st"},   /* G_BEND_A (atmos_bend[0]) */
+     [G_RESERVED25] = PD("", F_INT, 0, 127, 0),
+-    [G_RESERVED26] = PD("", F_INT, 0, 127, 0),
++    [G_RESERVED26] = {"BEND 2", F_INT, 0, 12, 2, 0, "st"},   /* G_BEND_B (atmos_bend[1]) */
+     [G_MFXTYPE] = PE("TYPE", N_FX, 0),
+     [G_MFXMIX] = PD("MIX", F_PCT, 0, 127, 127),
+     [G_MFXRATE] = PD("RATE", F_LFOHZ, 0, 127, 60),
+@@ -575,7 +575,7 @@
+     {"VOICE 3", FAM_EDIT, SC_TRACK, GR_NONE, {P_SPRD, 0xFF, 0xFF, 0xFF}},
+     {"GLOBAL", FAM_GLO, SC_GLOBAL, GR_NONE, {G_A4, G_SUSPOL, G_VELCRV, G_INFO}},   /* A4, sustain pedal polarity, velocity curve, CPU load (read only) */
+     {"PITCH", FAM_GLO, SC_GLOBAL, GR_NONE, {G_OCT_A, G_OCT_B, G_SEM_A, G_SEM_B}},  /* octave / semitone shift of the main and the secondary layer */
+-    {"MIDI", FAM_GLO, SC_GLOBAL, GR_NONE, {G_CH_A, G_CH_B, 0xFF, 0xFF}},          /* MIDI channel of the main and the secondary layer (USB and TRS always on) */
++    {"MIDI", FAM_GLO, SC_GLOBAL, GR_NONE, {G_CH_A, G_CH_B, G_BEND_A, G_BEND_B}},  /* MIDI channel and pitch-bend range (+/- st) of the main and the secondary layer (USB and TRS always on) */
+     {"PRESETS", FAM_SAVE, SC_GLOBAL, GR_BROWSE, {0xFF, 0xFF, 0xFF, 0xFF}},   /* browser: KNOB 1 LIST, 2 / PRESETS the sounds */
+     {"USER", FAM_SAVE, SC_GLOBAL, GR_USER, {0xFF, 0xFF, 0xFF, 0xFF}},       /* user presets: SLOT LOAD ERASE SAVE */
+     {"PROJECT", FAM_SAVE, SC_GLOBAL, GR_SLOTS, {G_SLOT, G_BOOT, G_LOAD, G_SAVE}},
+@@ -715,6 +715,13 @@
+         *valp = c;
+         return global_desc(id);
+     }
++    if (pg->scope == SC_GLOBAL && (id == G_BEND_A || id == G_BEND_B)) {   /* GLO MIDI page: bend range, a device setting */
++        static int16_t bend_cell[2];
++        int16_t *c = &bend_cell[id == G_BEND_B];
++        *c = atmos_bend[id == G_BEND_B];
++        *valp = c;
++        return global_desc(id);
++    }
+     if (pg->scope == SC_GLOBAL && id == G_DRUMCH) {
+         drumch_cell = settings_drumch;                   /* (as BOOT) */
+         *valp = &drumch_cell;
+diff -u -r orig1/settings_persist.c s1/src/settings_persist.c
+--- orig1/settings_persist.c	2026-11-18 15:08:46.332145510 +0000
++++ s1/src/settings_persist.c	2026-11-18 15:08:46.393170638 +0000
+@@ -30,6 +30,9 @@
+ static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KEPT (glo_restore, glo_poll) */
+ #define RECORD_PREF_TAG 0x52500000u /* RP, high half of the old zoom word */
+ #define A4_TAG 0x41340000u                          /* "A4": old spare contents are not tuning */
++/* BEND 1 / 2 (atmos_bend, 0..12 semitones, default 2) stored as (range - 2) mod 16: blank storage = 2, anything above 12 = 2 */
++static inline uint32_t bend_enc(uint32_t r) { return (r + 14u) & 15u; }
++static inline uint8_t bend_dec(uint32_t s) { uint32_t r = (s + 2u) & 15u; return (uint8_t)(r <= 12u ? r : 2u); }
+ #define AUTOSAVE_OFF_TAG 0xA1u                     /* CZ row byte 28: only this tag disables autosave */
+ /* Retired DIGITAL row, outside all live preset/settings bits. Kept by older
+  * Melodee builds along with the other favorites; no layout or magic change. */
+@@ -99,6 +102,9 @@
+         x[0] = p->favorites.factory[ATMOS_ROW][ATMOS_DATA]; x[1] = p->favorites.factory[ATMOS_ROW][26];
+         x[2] = p->favorites.factory[ATMOS_ROW][27];         x[3] = p->favorites.factory[15][25];
+         atmos_x_unpack(x);
++        uint32_t s = (uint32_t)(p->favorites.factory[15][24] >> 1) | (uint32_t)((p->favorites.factory[15][25] >> 5) & 1u) << 7;
++        atmos_bend[0] = bend_dec(s & 15u);                /* BEND 1 / 2: row 15 byte 24 bits 1..7 and byte 25 bit 5 */
++        atmos_bend[1] = bend_dec(s >> 4);
+     }
+     panel = p->panel.magic == PANEL_MAGIC ? p->panel : PANEL_DEFAULT;
+     return 1;
+@@ -126,6 +132,9 @@
+         atmos_x_pack(x);
+         p->favorites.factory[ATMOS_ROW][ATMOS_DATA] = x[0]; p->favorites.factory[ATMOS_ROW][26] = x[1];
+         p->favorites.factory[ATMOS_ROW][27] = x[2];         p->favorites.factory[15][25] = x[3];
++        uint32_t s = bend_enc(atmos_bend[0]) | bend_enc(atmos_bend[1]) << 4;   /* BEND 1 / 2 (byte 24 bit 0 is a CZ-1 star: kept) */
++        p->favorites.factory[15][24] = (uint8_t)((p->favorites.factory[15][24] & 1u) | (s & 127u) << 1);
++        p->favorites.factory[15][25] = (uint8_t)((p->favorites.factory[15][25] & ~(1u << 5)) | ((s >> 7) & 1u) << 5);
+     }
+     memcpy(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
+ #if MELODEE_USB_AUDIO
+diff -u -r orig1/ui_input.c s1/src/ui_input.c
+--- orig1/ui_input.c	2026-11-18 15:08:46.331670796 +0000
++++ s1/src/ui_input.c	2026-11-18 15:08:46.391627415 +0000
+@@ -941,6 +941,11 @@
+         settings_save();
+         return;
+     }
++    if (pg->scope == SC_GLOBAL && (pg->id[slot] == G_BEND_A || pg->id[slot] == G_BEND_B)) {   /* GLO MIDI page: bend range, saved */
++        atmos_bend[pg->id[slot] == G_BEND_B] = (uint8_t)clamp(v, 0, 12);
++        settings_save();
++        return;
++    }
+     if (pg->scope == SC_GLOBAL && pg->id[slot] == G_DRUMCH) { /* DRUM: the device's too */
+         settings_drumch = (uint8_t)v;
+         settings_save();

@@ -30,6 +30,9 @@ _Static_assert(sizeof(persist_t) == 604u, "the record's layout: new settings tak
 static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KEPT (glo_restore, glo_poll) */
 #define RECORD_PREF_TAG 0x52500000u /* RP, high half of the old zoom word */
 #define A4_TAG 0x41340000u                          /* "A4": old spare contents are not tuning */
+/* BEND 1 / 2 (atmos_bend, 0..12 semitones, default 2) stored as (range - 2) mod 16: blank storage = 2, anything above 12 = 2 */
+static inline uint32_t bend_enc(uint32_t r) { return (r + 14u) & 15u; }
+static inline uint8_t bend_dec(uint32_t s) { uint32_t r = (s + 2u) & 15u; return (uint8_t)(r <= 12u ? r : 2u); }
 #define AUTOSAVE_OFF_TAG 0xA1u                     /* CZ row byte 28: only this tag disables autosave */
 /* Retired DIGITAL row, outside all live preset/settings bits. Kept by older
  * Melodee builds along with the other favorites; no layout or magic change. */
@@ -99,6 +102,9 @@ static int settings_import(persist_t *p, int n)
         x[0] = p->favorites.factory[ATMOS_ROW][ATMOS_DATA]; x[1] = p->favorites.factory[ATMOS_ROW][26];
         x[2] = p->favorites.factory[ATMOS_ROW][27];         x[3] = p->favorites.factory[15][25];
         atmos_x_unpack(x);
+        uint32_t s = (uint32_t)(p->favorites.factory[15][24] >> 1) | (uint32_t)((p->favorites.factory[15][25] >> 5) & 1u) << 7;
+        atmos_bend[0] = bend_dec(s & 15u);                /* BEND 1 / 2: row 15 byte 24 bits 1..7 and byte 25 bit 5 */
+        atmos_bend[1] = bend_dec(s >> 4);
     }
     panel = p->panel.magic == PANEL_MAGIC ? p->panel : PANEL_DEFAULT;
     return 1;
@@ -126,6 +132,9 @@ static void settings_export(persist_t *p)
         atmos_x_pack(x);
         p->favorites.factory[ATMOS_ROW][ATMOS_DATA] = x[0]; p->favorites.factory[ATMOS_ROW][26] = x[1];
         p->favorites.factory[ATMOS_ROW][27] = x[2];         p->favorites.factory[15][25] = x[3];
+        uint32_t s = bend_enc(atmos_bend[0]) | bend_enc(atmos_bend[1]) << 4;   /* BEND 1 / 2 (byte 24 bit 0 is a CZ-1 star: kept) */
+        p->favorites.factory[15][24] = (uint8_t)((p->favorites.factory[15][24] & 1u) | (s & 127u) << 1);
+        p->favorites.factory[15][25] = (uint8_t)((p->favorites.factory[15][25] & ~(1u << 5)) | ((s >> 7) & 1u) << 5);
     }
     memcpy(p->favorites.factory[1] + 28, SETTINGS_OWNER, sizeof SETTINGS_OWNER);
 #if MELODEE_USB_AUDIO

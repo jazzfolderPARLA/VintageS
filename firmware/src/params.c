@@ -242,9 +242,9 @@ static const param_desc_t GP[G_COUNT] = {
     [G_A4] = {"A4", F_INT, A4_MIN, A4_MAX, A4_DEFAULT, 0, "Hz"},
     [G_CLRSEQ] = PE("CLRSQ", N_GO, 0),
     [G_INITSND] = PE("INIT", N_GO, 0),
-    [G_RESERVED24] = PD("", F_INT, 0, 127, 0),
+    [G_RESERVED24] = {"BEND 1", F_INT, 0, 12, 2, 0, "st"},   /* G_BEND_A (atmos_bend[0]) */
     [G_RESERVED25] = PD("", F_INT, 0, 127, 0),
-    [G_RESERVED26] = PD("", F_INT, 0, 127, 0),
+    [G_RESERVED26] = {"BEND 2", F_INT, 0, 12, 2, 0, "st"},   /* G_BEND_B (atmos_bend[1]) */
     [G_MFXTYPE] = PE("TYPE", N_FX, 0),
     [G_MFXMIX] = PD("MIX", F_PCT, 0, 127, 127),
     [G_MFXRATE] = PD("RATE", F_LFOHZ, 0, 127, 60),
@@ -575,7 +575,7 @@ static const page_t PAGES[] = {
     {"VOICE 3", FAM_EDIT, SC_TRACK, GR_NONE, {P_SPRD, 0xFF, 0xFF, 0xFF}},
     {"GLOBAL", FAM_GLO, SC_GLOBAL, GR_NONE, {G_A4, G_SUSPOL, G_VELCRV, G_INFO}},   /* A4, sustain pedal polarity, velocity curve, CPU load (read only) */
     {"PITCH", FAM_GLO, SC_GLOBAL, GR_NONE, {G_OCT_A, G_OCT_B, G_SEM_A, G_SEM_B}},  /* octave / semitone shift of the main and the secondary layer */
-    {"MIDI", FAM_GLO, SC_GLOBAL, GR_NONE, {G_CH_A, G_CH_B, 0xFF, 0xFF}},          /* MIDI channel of the main and the secondary layer (USB and TRS always on) */
+    {"MIDI", FAM_GLO, SC_GLOBAL, GR_NONE, {G_CH_A, G_CH_B, G_BEND_A, G_BEND_B}},  /* MIDI channel and pitch-bend range (+/- st) of the main and the secondary layer (USB and TRS always on) */
     {"PRESETS", FAM_SAVE, SC_GLOBAL, GR_BROWSE, {0xFF, 0xFF, 0xFF, 0xFF}},   /* browser: KNOB 1 LIST, 2 / PRESETS the sounds */
     {"USER", FAM_SAVE, SC_GLOBAL, GR_USER, {0xFF, 0xFF, 0xFF, 0xFF}},       /* user presets: SLOT LOAD ERASE SAVE */
     {"PROJECT", FAM_SAVE, SC_GLOBAL, GR_SLOTS, {G_SLOT, G_BOOT, G_LOAD, G_SAVE}},
@@ -712,6 +712,13 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
                        id == G_OCT_A ? atmos_oct[0] : id == G_OCT_B ? atmos_oct[1] :
                        id == G_SEM_A ? atmos_sem[0] : id == G_SEM_B ? atmos_sem[1] :
                        id == G_CH_A ? atmos_ch[0] : atmos_ch[1]);
+        *valp = c;
+        return global_desc(id);
+    }
+    if (pg->scope == SC_GLOBAL && (id == G_BEND_A || id == G_BEND_B)) {   /* GLO MIDI page: bend range, a device setting */
+        static int16_t bend_cell[2];
+        int16_t *c = &bend_cell[id == G_BEND_B];
+        *c = atmos_bend[id == G_BEND_B];
         *valp = c;
         return global_desc(id);
     }
