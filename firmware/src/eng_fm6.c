@@ -393,6 +393,7 @@ static void fm6_ctl_block(track_t *t, const uint8_t *ed)
     fm6_ctl_t *c = &P->pt;
     uint32_t k, egs = 0;
     int32_t raw = t->bend_raw, cc[4], m;
+    uint32_t ti = (uint32_t)(t - trk);
     cc[0] = t->mw;
     cc[1] = t->foot;
     cc[2] = t->breath;
@@ -413,6 +414,8 @@ static void fm6_ctl_block(track_t *t, const uint8_t *ed)
         c->emod = 127;
     if (!raw) {                                          /* pitch bend */
         c->pb = 0;
+    } else if (ti < 2u) {                                /* GLO > BEND 1 / 2: smooth, the same range up and down */
+        c->pb = fm6_f32(raw * 2048 * (int32_t)settings_bend[ti]) / 12;
     } else if (!FM6F(t)[FN_PBSTEP]) {
         c->pb = fm6_f32(raw * 2048 * (raw > 0 ? FM6F(t)[FN_PBUP] : FM6F(t)[FN_PBDN])) / 12;
     } else {

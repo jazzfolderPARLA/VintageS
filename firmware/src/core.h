@@ -136,6 +136,9 @@ static int param_master_fx(uint32_t id){return id>=G_MFXTYPE && id<=G_MFX3CHAR;}
 
 static int param_reserved(uint32_t id)
 { return (id>=P_RESERVED33 && id<=P_RESERVED36) || (id>=P_RESERVED45 && id<=P_RESERVED48); }
+/* GLO > BEND page cells (device settings in settings_bend, never in a project: these ids stay reserved on the wire) */
+#define G_BEND1 G_RESERVED4          /* KNOB 3: pitch-bend range of track 1 */
+#define G_BEND2 G_RESERVED5          /* KNOB 4: pitch-bend range of track 2 */
 static int global_reserved(uint32_t id)
 { return (id>=G_RESERVED4 && id<=G_RESERVED11) || (id>=G_RESERVED24 && id<=G_RESERVED26); }
 
@@ -423,6 +426,9 @@ typedef struct {
 } song_t;
 
 static track_t trk[NTRK];        /* the instrument: four parts */
+/* GLO > BEND KNOB 3 / KNOB 4: pitch-bend range (+/- semitones, 0..12) of tracks 1 and 2 for every engine except
+ * PROPHET (its range is saved in the patch). A device setting (settings_persist.c), not song.g. */
+static uint8_t settings_bend[2] = {2, 2};
 static song_t song;
 #define TSEL (&trk[song.sel])    /* the selected track */
 

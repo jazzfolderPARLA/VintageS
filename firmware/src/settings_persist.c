@@ -29,6 +29,10 @@ _Static_assert(sizeof(persist_t) == 604u, "the record's layout: new settings tak
 static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KEPT (glo_restore, glo_poll) */
 #define RECORD_PREF_TAG 0x52500000u /* RP, high half of the old zoom word */
 #define A4_TAG 0x41340000u                          /* "A4": old spare contents are not tuning */
+/* BEND 1 / 2 (settings_bend, 0..12 semitones, default 2): favorites.factory[15][25], a nibble each, stored as (range - 2) mod 16:
+ * blank storage = 2, anything above 12 = 2 (byte 25 is free: CZ-1 native slots end at bit 192 = byte 24 bit 0) */
+static inline uint32_t bend_enc(uint32_t r) { return (r + 14u) & 15u; }
+static inline uint8_t bend_dec(uint32_t s) { uint32_t r = (s + 2u) & 15u; return (uint8_t)(r <= 12u ? r : 2u); }
 #define AUTOSAVE_OFF_TAG 0xA1u                     /* CZ row byte 28: only this tag disables autosave */
 /* Retired DIGITAL row, outside all live preset/settings bits. Kept by older
  * Melodee builds along with the other favorites; no layout or magic change. */
@@ -75,6 +79,8 @@ static int settings_import(persist_t *p, int n)
     p->palette = palette_to_stored(palette_from_stored(p->palette));
     settings_screen=p->favorites.factory[15][27] < 8u ? p->favorites.factory[15][27] : 0u;
     settings_autosave = p->favorites.factory[15][28] != AUTOSAVE_OFF_TAG;
+    settings_bend[0] = bend_dec(p->favorites.factory[15][25] & 15u);      /* BEND 1 / 2: byte 25, a nibble each */
+    settings_bend[1] = bend_dec(p->favorites.factory[15][25] >> 4);
     settings.magic = SETTINGS_MAGIC;
     settings.palette = palette_from_stored(p->palette);
     settings.lowcut = 0;
@@ -119,6 +125,7 @@ static void settings_export(persist_t *p)
 #endif
     p->favorites.factory[15][27]=settings_screen;
     p->favorites.factory[15][28] = settings_autosave ? 0u : AUTOSAVE_OFF_TAG;
+    p->favorites.factory[15][25] = (uint8_t)(bend_enc(settings_bend[0]) | bend_enc(settings_bend[1]) << 4);
     p->ext.boot = settings_boot;
     p->ext.drumch = settings_drumch == 10u ? 0u : !settings_drumch ? 17u : settings_drumch;
     p->ext.lights = settings_lights == LIGHTS_MID ? 0u : settings_lights + 1u;

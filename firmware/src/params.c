@@ -217,8 +217,8 @@ static const param_desc_t GP[G_COUNT] = {
     [G_SWING] = PD("SWG", F_PCT, 0, 100, 0),
     [G_CLOCK] = PE("CLK", N_CLOCK, 0),
     [G_TUNE] = PD("TUNE", F_INT, -50, 50, 0),
-    [G_RESERVED4] = PD("", F_INT, 0, 127, 0),
-    [G_RESERVED5] = PD("", F_INT, 0, 127, 0),
+    [G_RESERVED4] = {"BEND 1", F_INT, 0, 12, 2, 0, "st"},   /* G_BEND1: settings_bend[0] */
+    [G_RESERVED5] = {"BEND 2", F_INT, 0, 12, 2, 0, "st"},   /* G_BEND2: settings_bend[1] */
     [G_RESERVED6] = PD("", F_INT, 0, 127, 0),
     [G_RESERVED7] = PD("", F_INT, 0, 127, 0),
     [G_RESERVED8] = PD("", F_INT, 0, 127, 0),
@@ -570,6 +570,7 @@ static const page_t PAGES[] = {
     {"VOICE 3", FAM_EDIT, SC_TRACK, GR_NONE, {P_SPRD, 0xFF, 0xFF, 0xFF}},
     {"GLOBAL", FAM_GLO, SC_GLOBAL, GR_NONE, {G_A4, 0xFF, G_CLOCK, G_TUNE}},      /* A4 device reference; CLK/TUNE kept (GLO_KEPT) */
     {"SYSTEM", FAM_GLO, SC_GLOBAL, GR_NONE, {G_MIDI, G_DRUMCH, G_ROUTE, G_INFO}},
+    {"BEND", FAM_GLO, SC_GLOBAL, GR_NONE, {0xFF, 0xFF, G_BEND1, G_BEND2}},   /* pitch-bend range of tracks 1 and 2 (+/- semitones) */
     {"PRESETS", FAM_SAVE, SC_GLOBAL, GR_BROWSE, {0xFF, 0xFF, 0xFF, 0xFF}},   /* browser: KNOB 1 LIST, 2 / PRESETS the sounds */
     {"USER", FAM_SAVE, SC_GLOBAL, GR_USER, {0xFF, 0xFF, 0xFF, 0xFF}},       /* user presets: SLOT LOAD ERASE SAVE */
     {"PROJECT", FAM_SAVE, SC_GLOBAL, GR_SLOTS, {G_SLOT, G_BOOT, G_LOAD, G_SAVE}},
@@ -696,6 +697,13 @@ static const param_desc_t *page_desc(const page_t *pg, uint32_t slot, int16_t **
     }
     if (pg->scope == SC_GLOBAL && id == G_A4) {
         *valp = &tuning_a4;
+        return global_desc(id);
+    }
+    if (pg->scope == SC_GLOBAL && (id == G_BEND1 || id == G_BEND2)) {   /* BEND 1 / 2: the device's (settings_bend) */
+        static int16_t bend_cell[2];
+        int16_t *c = &bend_cell[id == G_BEND2];
+        *c = settings_bend[id == G_BEND2];
+        *valp = c;
         return global_desc(id);
     }
     if (pg->scope == SC_GLOBAL && id == G_DRUMCH) {

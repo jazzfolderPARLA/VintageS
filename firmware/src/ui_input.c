@@ -885,6 +885,11 @@ static void edit_param(uint32_t slot, int32_t steps)
         settings_save();
         return;
     }
+    if (pg->scope == SC_GLOBAL && (pg->id[slot] == G_BEND1 || pg->id[slot] == G_BEND2)) { /* BEND 1 / 2: the device's too */
+        settings_bend[pg->id[slot] == G_BEND2] = (uint8_t)clamp(v, 0, 12);
+        settings_save();
+        return;
+    }
     if (pg->scope == SC_GLOBAL && pg->id[slot] == G_DRUMCH) { /* DRUM: the device's too */
         settings_drumch = (uint8_t)v;
         settings_save();

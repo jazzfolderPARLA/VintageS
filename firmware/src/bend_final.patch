@@ -1,0 +1,136 @@
+diff -u a/core.h b/core.h
+--- a/core.h	2026-11-18 21:18:33.656748397 +0000
++++ b/core.h	2026-11-18 21:18:33.660078841 +0000
+@@ -136,6 +136,9 @@
+ 
+ static int param_reserved(uint32_t id)
+ { return (id>=P_RESERVED33 && id<=P_RESERVED36) || (id>=P_RESERVED45 && id<=P_RESERVED48); }
++/* GLO > BEND page cells (device settings in settings_bend, never in a project: these ids stay reserved on the wire) */
++#define G_BEND1 G_RESERVED4          /* KNOB 3: pitch-bend range of track 1 */
++#define G_BEND2 G_RESERVED5          /* KNOB 4: pitch-bend range of track 2 */
+ static int global_reserved(uint32_t id)
+ { return (id>=G_RESERVED4 && id<=G_RESERVED11) || (id>=G_RESERVED24 && id<=G_RESERVED26); }
+ 
+@@ -423,6 +426,9 @@
+ } song_t;
+ 
+ static track_t trk[NTRK];        /* the instrument: four parts */
++/* GLO > BEND KNOB 3 / KNOB 4: pitch-bend range (+/- semitones, 0..12) of tracks 1 and 2 for every engine except
++ * PROPHET (its range is saved in the patch). A device setting (settings_persist.c), not song.g. */
++static uint8_t settings_bend[2] = {2, 2};
+ static song_t song;
+ #define TSEL (&trk[song.sel])    /* the selected track */
+ 
+diff -u a/eng_fm6.c b/eng_fm6.c
+--- a/eng_fm6.c	2026-11-18 21:18:33.657065571 +0000
++++ b/eng_fm6.c	2026-11-18 21:18:33.660830432 +0000
+@@ -393,6 +393,7 @@
+     fm6_ctl_t *c = &P->pt;
+     uint32_t k, egs = 0;
+     int32_t raw = t->bend_raw, cc[4], m;
++    uint32_t ti = (uint32_t)(t - trk);
+     cc[0] = t->mw;
+     cc[1] = t->foot;
+     cc[2] = t->breath;
+@@ -413,6 +414,8 @@
+         c->emod = 127;
+     if (!raw) {                                          /* pitch bend */
+         c->pb = 0;
++    } else if (ti < 2u) {                                /* GLO > BEND 1 / 2: smooth, the same range up and down */
++        c->pb = fm6_f32(raw * 2048 * (int32_t)settings_bend[ti]) / 12;
+     } else if (!FM6F(t)[FN_PBSTEP]) {
+         c->pb = fm6_f32(raw * 2048 * (raw > 0 ? FM6F(t)[FN_PBUP] : FM6F(t)[FN_PBDN])) / 12;
+     } else {
+diff -u a/midi_control.c b/midi_control.c
+--- a/midi_control.c	2026-11-18 21:18:33.657349785 +0000
++++ b/midi_control.c	2026-11-18 21:18:33.661203650 +0000
+@@ -52,6 +52,7 @@
+ {
+     int32_t range = ((int32_t)c->semis * 100 + c->cents) * 256 / 100;
+     if(t->eng_req==ENGI_PROPHET)range=(clamp(p5_patch_of(t)->raw[P5_BEND],0,11)+1)*256;
++    else if(trk_index(t)<2u)range=(int32_t)settings_bend[trk_index(t)]*256;   /* GLO > BEND 1 / 2 */
+     if (drum_track(t))
+         return;
+     midi_bend_target[trk_index(t)] = (int32_t)c->bend * range / (c->bend < 0 ? 8192 : 8191);
+diff -u a/params.c b/params.c
+--- a/params.c	2026-11-18 21:18:33.657781060 +0000
++++ b/params.c	2026-11-18 21:18:33.662129048 +0000
+@@ -217,8 +217,8 @@
+     [G_SWING] = PD("SWG", F_PCT, 0, 100, 0),
+     [G_CLOCK] = PE("CLK", N_CLOCK, 0),
+     [G_TUNE] = PD("TUNE", F_INT, -50, 50, 0),
+-    [G_RESERVED4] = PD("", F_INT, 0, 127, 0),
+-    [G_RESERVED5] = PD("", F_INT, 0, 127, 0),
++    [G_RESERVED4] = {"BEND 1", F_INT, 0, 12, 2, 0, "st"},   /* G_BEND1: settings_bend[0] */
++    [G_RESERVED5] = {"BEND 2", F_INT, 0, 12, 2, 0, "st"},   /* G_BEND2: settings_bend[1] */
+     [G_RESERVED6] = PD("", F_INT, 0, 127, 0),
+     [G_RESERVED7] = PD("", F_INT, 0, 127, 0),
+     [G_RESERVED8] = PD("", F_INT, 0, 127, 0),
+@@ -570,6 +570,7 @@
+     {"VOICE 3", FAM_EDIT, SC_TRACK, GR_NONE, {P_SPRD, 0xFF, 0xFF, 0xFF}},
+     {"GLOBAL", FAM_GLO, SC_GLOBAL, GR_NONE, {G_A4, 0xFF, G_CLOCK, G_TUNE}},      /* A4 device reference; CLK/TUNE kept (GLO_KEPT) */
+     {"SYSTEM", FAM_GLO, SC_GLOBAL, GR_NONE, {G_MIDI, G_DRUMCH, G_ROUTE, G_INFO}},
++    {"BEND", FAM_GLO, SC_GLOBAL, GR_NONE, {0xFF, 0xFF, G_BEND1, G_BEND2}},   /* pitch-bend range of tracks 1 and 2 (+/- semitones) */
+     {"PRESETS", FAM_SAVE, SC_GLOBAL, GR_BROWSE, {0xFF, 0xFF, 0xFF, 0xFF}},   /* browser: KNOB 1 LIST, 2 / PRESETS the sounds */
+     {"USER", FAM_SAVE, SC_GLOBAL, GR_USER, {0xFF, 0xFF, 0xFF, 0xFF}},       /* user presets: SLOT LOAD ERASE SAVE */
+     {"PROJECT", FAM_SAVE, SC_GLOBAL, GR_SLOTS, {G_SLOT, G_BOOT, G_LOAD, G_SAVE}},
+@@ -698,6 +699,13 @@
+         *valp = &tuning_a4;
+         return global_desc(id);
+     }
++    if (pg->scope == SC_GLOBAL && (id == G_BEND1 || id == G_BEND2)) {   /* BEND 1 / 2: the device's (settings_bend) */
++        static int16_t bend_cell[2];
++        int16_t *c = &bend_cell[id == G_BEND2];
++        *c = settings_bend[id == G_BEND2];
++        *valp = c;
++        return global_desc(id);
++    }
+     if (pg->scope == SC_GLOBAL && id == G_DRUMCH) {
+         drumch_cell = settings_drumch;                   /* (as BOOT) */
+         *valp = &drumch_cell;
+diff -u a/settings_persist.c b/settings_persist.c
+--- a/settings_persist.c	2026-11-18 21:18:33.656985987 +0000
++++ b/settings_persist.c	2026-11-18 21:18:33.660410488 +0000
+@@ -29,6 +29,10 @@
+ static int16_t settings_glo[4];                     /* ext.glo: project.c GLO_KEPT (glo_restore, glo_poll) */
+ #define RECORD_PREF_TAG 0x52500000u /* RP, high half of the old zoom word */
+ #define A4_TAG 0x41340000u                          /* "A4": old spare contents are not tuning */
++/* BEND 1 / 2 (settings_bend, 0..12 semitones, default 2): favorites.factory[15][25], a nibble each, stored as (range - 2) mod 16:
++ * blank storage = 2, anything above 12 = 2 (byte 25 is free: CZ-1 native slots end at bit 192 = byte 24 bit 0) */
++static inline uint32_t bend_enc(uint32_t r) { return (r + 14u) & 15u; }
++static inline uint8_t bend_dec(uint32_t s) { uint32_t r = (s + 2u) & 15u; return (uint8_t)(r <= 12u ? r : 2u); }
+ #define AUTOSAVE_OFF_TAG 0xA1u                     /* CZ row byte 28: only this tag disables autosave */
+ /* Retired DIGITAL row, outside all live preset/settings bits. Kept by older
+  * Melodee builds along with the other favorites; no layout or magic change. */
+@@ -75,6 +79,8 @@
+     p->palette = palette_to_stored(palette_from_stored(p->palette));
+     settings_screen=p->favorites.factory[15][27] < 8u ? p->favorites.factory[15][27] : 0u;
+     settings_autosave = p->favorites.factory[15][28] != AUTOSAVE_OFF_TAG;
++    settings_bend[0] = bend_dec(p->favorites.factory[15][25] & 15u);      /* BEND 1 / 2: byte 25, a nibble each */
++    settings_bend[1] = bend_dec(p->favorites.factory[15][25] >> 4);
+     settings.magic = SETTINGS_MAGIC;
+     settings.palette = palette_from_stored(p->palette);
+     settings.lowcut = 0;
+@@ -119,6 +125,7 @@
+ #endif
+     p->favorites.factory[15][27]=settings_screen;
+     p->favorites.factory[15][28] = settings_autosave ? 0u : AUTOSAVE_OFF_TAG;
++    p->favorites.factory[15][25] = (uint8_t)(bend_enc(settings_bend[0]) | bend_enc(settings_bend[1]) << 4);
+     p->ext.boot = settings_boot;
+     p->ext.drumch = settings_drumch == 10u ? 0u : !settings_drumch ? 17u : settings_drumch;
+     p->ext.lights = settings_lights == LIGHTS_MID ? 0u : settings_lights + 1u;
+diff -u a/ui_input.c b/ui_input.c
+--- a/ui_input.c	2026-11-18 21:18:33.656680200 +0000
++++ b/ui_input.c	2026-11-18 21:18:33.660000334 +0000
+@@ -885,6 +885,11 @@
+         settings_save();
+         return;
+     }
++    if (pg->scope == SC_GLOBAL && (pg->id[slot] == G_BEND1 || pg->id[slot] == G_BEND2)) { /* BEND 1 / 2: the device's too */
++        settings_bend[pg->id[slot] == G_BEND2] = (uint8_t)clamp(v, 0, 12);
++        settings_save();
++        return;
++    }
+     if (pg->scope == SC_GLOBAL && pg->id[slot] == G_DRUMCH) { /* DRUM: the device's too */
+         settings_drumch = (uint8_t)v;
+         settings_save();
