@@ -420,7 +420,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
         }
         int32_t l=f->rev_prev_l+fx_div_pow2((f->rev_l-f->rev_prev_l)*(phase+1u),3);
         int32_t r=f->rev_prev_r+fx_div_pow2((f->rev_r-f->rev_prev_r)*(phase+1u),3);
-        f->rev_pl+=fx_div_pow2((l-f->rev_pl)*3,3);f->rev_pr+=fx_div_pow2((r-f->rev_pr)*3,3);   /* ATMOS: smooth the linear interpolation (kills the 5.5 kHz images) */
+        f->rev_pl+=fx_div_pow2((l-f->rev_pl)*2,3);f->rev_pr+=fx_div_pow2((r-f->rev_pr)*2,3);   /* ATMOS: smooth the linear interpolation (kills the 5.5 kHz images) */
         fx_return(target,0,0,i,f->rev_pl,f->rev_pr,&mix);
         phase=(phase+1u)&7u;
     }
@@ -500,22 +500,22 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_copy(fx_state_t *f
 static inline __attribute__((always_inline)) int32_t fx_atmos_in(int32_t x)   /* always inline: fx_pan sits in SRAM and a call to flash does not reach */
 {
     int32_t a=x<0?-x:x;
-    if(a>104000){
-        int32_t i=((a-104000)*134)>>14;                   /* (a - 104000) / 122: tanh's argument, 256 steps over 31200 */
+    if(a>52000){
+        int32_t i=((a-52000)*262)>>14;                    /* (a - 52000) / 62.5: tanh's argument, 256 steps over 8000 */
         if(i>256)i=256;
-        a=104000+((15600*(int32_t)TANH_Q15[i])>>15);      /* (about 119000 at most) */
+        a=52000+((8000*(int32_t)TANH_Q15[i])>>15);
     }
-    a>>=2;
+    a>>=1;
     return x<0?-a:a;
 }
 static inline __attribute__((always_inline)) void fx_atmos_out(uint32_t n)
 {
-    for(uint32_t i=0;i<n;i++){fx_left[i]*=4;fx_right[i]*=4;}
+    for(uint32_t i=0;i<n;i++){fx_left[i]*=2;fx_right[i]*=2;}
 }
 static __attribute__((noinline,section(".dsp_text"))) void fx_pan(track_t *t,int32_t *b,uint32_t n)
 {
     if(!spread_on){
-        for(uint32_t i=0;i<n;i++)fx_left[i]=fx_right[i]=fx_atmos_in(fx_limit(b[i],-262143,262143));
+        for(uint32_t i=0;i<n;i++)fx_left[i]=fx_right[i]=fx_atmos_in(fx_limit(b[i],-65536,65536));
         return;
     }
     int32_t pan=0,s=spread_on?(t->p[P_SPRD]+1)>>1:0;
@@ -524,7 +524,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_pan(track_t *t,int
     for(uint32_t i=0;i<n;i++){
         int32_t a=spread_on?spread_buf[i]:fx_div_pow2(b[i],1),c=b[i]-a;
         a=fx_limit(a,-262143,262143);c=fx_limit(c,-262143,262143);
-        fx_left[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gla+c*glb,12),-262143,262143));fx_right[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gra+c*grb,12),-262143,262143));
+        fx_left[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gla+c*glb,12),-65536,65536));fx_right[i]=fx_atmos_in(fx_limit(fx_div_pow2(a*gra+c*grb,12),-65536,65536));
     }
 }
 /* Position the finished track once. A mono engine stays mono through its
