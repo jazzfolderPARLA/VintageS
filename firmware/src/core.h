@@ -157,6 +157,8 @@ static int param_master_fx(uint32_t id){return id>=G_MFXTYPE && id<=G_MFX3CHAR;}
 #define G_SEM_B  G_RESERVED9      /* secondary layer semitone shift */
 #define G_CH_A   G_RESERVED10     /* main layer MIDI channel */
 #define G_CH_B   G_RESERVED11     /* secondary layer MIDI channel */
+#define G_BEND_A G_RESERVED24     /* GLO MIDI page KNOB 3: pitch-bend range of track 1 (layer A), atmos_bend[0] */
+#define G_BEND_B G_RESERVED26     /* GLO MIDI page KNOB 4: pitch-bend range of track 2 (layer B), atmos_bend[1] */
 #define G_DRLVL G_RESERVED25         /* (their meaning in a project from before 1.0: proj_drums_to_part) */
 #define G_DRREV G_RESERVED26
 
@@ -449,6 +451,9 @@ typedef struct {
 } song_t;
 
 static track_t trk[NTRK];        /* the instrument: four parts */
+/* GLO > MIDI KNOB 3 / KNOB 4: pitch-bend range (+/- semitones, 0..12) of tracks 1 and 2 for every engine except
+ * PROPHET (its range is saved in the patch). A device setting (settings_persist.c), not song.g. */
+static uint8_t atmos_bend[2] = {2, 2};
 static song_t song;
 #define TSEL (&trk[song.sel])    /* the selected track */
 

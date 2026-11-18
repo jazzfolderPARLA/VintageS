@@ -941,6 +941,11 @@ static void edit_param(uint32_t slot, int32_t steps)
         settings_save();
         return;
     }
+    if (pg->scope == SC_GLOBAL && (pg->id[slot] == G_BEND_A || pg->id[slot] == G_BEND_B)) {   /* GLO MIDI page: bend range, saved */
+        atmos_bend[pg->id[slot] == G_BEND_B] = (uint8_t)clamp(v, 0, 12);
+        settings_save();
+        return;
+    }
     if (pg->scope == SC_GLOBAL && pg->id[slot] == G_DRUMCH) { /* DRUM: the device's too */
         settings_drumch = (uint8_t)v;
         settings_save();
