@@ -31,7 +31,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python3 -m pip install --user --break-system-packages Pillow fonttools
+          python3 -m pip install --user Pillow fonttools || python3 -m pip install --user --break-system-packages Pillow fonttools
 
       - name: Install JieLi toolchain
         run: |
