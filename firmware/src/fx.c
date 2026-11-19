@@ -301,7 +301,7 @@ static void fx_reverb_setup(fx_state_t *f)
     f->rev_rate=f->rate;f->rev_char=f->character;
     float decay=300.0f+(float)(f->character*f->character)*(5700.0f/(127.0f*127.0f));
     for(uint32_t k=0;k<8u;k++){
-        f->rev_span[k]=(uint16_t)((uint32_t)REV_LEN[k]*(64u+(uint32_t)f->rate)/191u);
+        f->rev_span[k]=(uint16_t)((uint32_t)REV_LEN[k]*(64u+(uint32_t)f->rate)/200u); /* VINTAGE: /200 (was /191): keeps >=4 samples of margin for the drift sweep; at SIZE max the read wrapped to a 1-4 sample delay (metallic whistle) */
         float x=6.907755f*(float)f->rev_span[k]*(1000.0f*FX_REV_DIV)/((float)FS*decay);
         f->rev_gain[k]=(int32_t)(65536.0f*(1.0f-x*0.5f)/(1.0f+x*0.5f));
     }
@@ -363,24 +363,24 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
 {
     /* DEPTH retains more body on each round trip and raises the wet return.
      * Keep this work at FS/8: no additional delay memory or synth-rate DSP. */
-    int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo,difference=f->damp[0],low=f->damp[1];
+    int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo; /* VINTAGE: difference/low stay in f->damp[0]/[1] */
     /* ATMOS: the extra decimator/smoother state lives in f->, not in locals, so this SRAM kernel keeps the register pressure of the original
      * (more live registers make the compiler call a ROM save/restore helper, which the build rejects). */
     uint32_t phase=f->decim;
-    int32_t mix=f->mix,tone=166+f->character*80/127,level=((724+f->character*3)*5)>>3; /* ATMOS: wet 4 dB lower, so loud chords stay in the linear zone */
+    int32_t mix=f->mix,tone=90+f->character*60/127,level=((724+f->character*3)*9)>>4; /* VINTAGE: damping 90..150/256 (was 166..246: the highs recirculated), wet level 9/16 (was 5/8) */
     for(uint32_t i=0;i<n;i++){
         int32_t mono=fx_div_pow2(fx_left[i]+fx_right[i],1);
         a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);f->rev_i3=(int32_t)((uint32_t)f->rev_i3+(uint32_t)b);f->rev_i4=(int32_t)((uint32_t)f->rev_i4+(uint32_t)f->rev_i3);
         if(!phase){
             uint32_t comb=(uint32_t)f->rev_i4-(uint32_t)previous;previous=f->rev_i4;
-            uint32_t comb2=comb-(uint32_t)difference;difference=(int32_t)comb;
+            uint32_t comb2=comb-(uint32_t)f->damp[0];f->damp[0]=(int32_t)comb;
             uint32_t comb3=comb2-(uint32_t)f->rev_z3;f->rev_z3=(int32_t)comb2;
             int32_t input=fx_div_pow2((int32_t)(comb3-(uint32_t)f->rev_z4),12);f->rev_z4=(int32_t)comb3;   /* sinc^4 /8^4 */
-            low=fx_div_pow2(low+7*input,3);input=low;
+            f->damp[1]=fx_div_pow2(f->damp[1]+7*input,3);input=f->damp[1];
             /* Cheap rate-conversion compensation restores upper-mid body
              * without increasing the bass return or allocating another filter. */
-            int32_t previous_input=f->damp[2];f->damp[2]=input;
-            input+=fx_div_pow2(input-previous_input,1); /* the sinc^4 droops more: shelf 1/4 -> 1/2 */
+            /* VINTAGE: the edge shelf (+6 dB at the band edge) is gone: that is where the decimator's alias residue and the interpolator's
+             * images live, and boosting it was the shrill sizzle. */
             int32_t v[8],x;uint32_t off=0;
             f->rev_dc+=((float)input-f->rev_dc)*0.006f;
             x=fx_limit(fx_div_pow2((int32_t)((float)input-f->rev_dc),2),-16000,16000);
@@ -424,7 +424,7 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
         fx_return(target,0,0,i,f->rev_pl,f->rev_pr,&mix);
         phase=(phase+1u)&7u;
     }
-    f->mix=mix;f->decim=(uint8_t)phase;f->rev_input=a;f->rev_input2=b;f->echo=previous;f->damp[0]=difference;f->damp[1]=low;
+    f->mix=mix;f->decim=(uint8_t)phase;f->rev_input=a;f->rev_input2=b;f->echo=previous;
 }
 /* The filter inserts use a quarter-rate triangular decimator and pole,
  * independently per stereo side. Their Reverb histories are idle.
