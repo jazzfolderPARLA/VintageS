@@ -11,6 +11,7 @@ static void preset_go(uint32_t n);
 
 enum { CAT_NONE, CAT_BASS, CAT_LEAD, CAT_PAD, CAT_PLUCK, CAT_KEYS, CAT_DRUM, CAT_FX, CAT_OTHER,
        CAT_ORGAN, CAT_STRING, CAT_BRASS, CAT_WIND, CAT_BELL, CAT_N };
+#include "dx7_rom.h"                  /* ATMOS: DX7_ROM_CATS (once only: #pragma once) */
 static const char *const CAT_NAME[CAT_N] = {"-", "BASS", "LEAD", "PAD", "PLUCK", "KEYS", "DRUM", "FX", "OTHER",
                                             "ORGAN", "STRING", "BRASS", "WIND", "BELL"};
 static const char CAT_LETTER[CAT_N + 1u] = "?BLPUKDFOGSRWE";   /* a letter's index is its CAT_* */
@@ -27,7 +28,8 @@ static const char *const PRESET_CAT[NENGINES] = {
 #endif
     [3] = "OLBBBBBBLLLLLLLLPSPPGGKKUUERFFFF",          /* SID */
     [10] = "DD",                                        /* DRUM: the kits */
-    [12] = "KEBRPEGUKRBEEKGSPLUEWEBEO",                 /* FM6, INIT VOICE */
+    [14] = "RRRWORPKGGGGUEKKEDERRSUSWWRUUULBLLLLBLFPKKODDDDPPUFPEPPFEFDFFDFFSSWGWWUFEUSOEGFFRFUWLFWBFWPFFEPWKGWFRPWFKWFWWKFBWUBSEFERPWSSFPFG",                      /* JUNO-106: the 128 factory patches (ATMOS) */
+    [12] = DX7_ROM_CATS "O",                            /* FM6: the 128 DX7 ROM voices, INIT VOICE */
     [ENGI_CZ] = "ORRRSSSSSUUUBBBBURWSWWWWUKKKKKKKKGGGGGPPPEEEEEDEESSULLLLFDDDEFFFF",   /* INIT TONE, Casio's 64 */
     [ENGI_PROPHET] =                                    /* INIT, Sequential's 200 */
         "OOOKBPROOOGKLPWPOLOUUBEOEGFPOOBOEOOODDDEOOGKSGBPEPPLBROOOOPOKPKOFOSOOEPRODFLFOOEOULWOPBOLOPKFORGLPOBULROOSKOO"
@@ -209,6 +211,17 @@ static void recent_push(uint32_t src, uint32_t k)
 enum { LM_ALL, LM_FAV, LM_RECENT, LM_CAT };
 #define LM_N (LM_CAT + NELEM(CAT_ORDER))
 static uint8_t list_recent;
+/* ATMOS: SCL held opens the browser on the sounds of the bank that is playing and nothing else: no LIST (ALL / FAV / RECENT /
+ * categories), no other bank's sounds, no user slots. It lasts while the browser page is up (list_bank_on) and ends with
+ * list_set. atmos_bank_of is ui_input.c's. */
+static uint8_t list_bank;
+static uint32_t atmos_bank_of(uint32_t e);
+static int list_bank_on(void)
+{
+    if (list_bank && (ui.home || cur_page()->graph != GR_BROWSE))
+        list_bank = 0;
+    return list_bank;
+}
 static struct { uint8_t on, trk, mode, x; uint16_t n; uint32_t t; } brw;   /* the pending place: list index n; x the
                                                                              * turn's acceleration (the browser's badge) */
 static uint32_t list_mode(void)
@@ -225,6 +238,7 @@ static uint32_t list_mode(void)
 }
 static void list_set(uint32_t m)
 {
+    list_bank = 0;
     favorites.filter = m == LM_FAV;
     list_recent = m == LM_RECENT;
     list_lcat = (uint8_t)(m >= LM_CAT && m < LM_N ? CAT_ORDER[m - LM_CAT] : 0u);
@@ -261,10 +275,20 @@ static uint32_t lseg_len(uint32_t seg)
     e = eng_vis(seg / 2u);
     return seg & 1u ? native_limit(e) : preset_shown(e);
 }
+/* the bank list: only the factory sounds of the playing bank's engine(s) (bank D: CZ-1 and SID) */
+static int list_bank_seg(uint32_t seg)
+{
+    uint32_t cb = atmos_bank_of(TSEL->eng_req), e;
+    if ((seg & 1u) || seg >= LSEG_USER)
+        return 0;
+    e = lseg_src(seg);
+    return cb < ATMOS_NBANK ? atmos_bank_of(e) == cb : e == TSEL->eng_req;
+}
 static uint32_t list_scan(uint32_t m, uint32_t ws, uint32_t wk, uint32_t n, uint32_t *as, uint32_t *ak,
                           uint32_t *total)
 {
     uint32_t seg, src, k, i, c = 0, pos = 0xFFFFFFFFu;
+    int bank = list_bank_on();
     *as = USER_GENERAL;
     *ak = UP_SLOTS;
     if (m == LM_RECENT) {
@@ -282,6 +306,8 @@ static uint32_t list_scan(uint32_t m, uint32_t ws, uint32_t wk, uint32_t n, uint
     } else {
         for (seg = 0; seg <= LSEG_USER; seg++) {
             uint32_t len = lseg_len(seg), slot = seg >= LSEG_USER || (seg & 1u), init;
+            if (bank && !list_bank_seg(seg))
+                continue;
             src = lseg_src(seg);
             init = slot || !len ? 0u : preset_init(src);   /* (an engine's INIT first: FM6's comes after F24) */
             for (i = 0; i < len; i++) {

@@ -6,6 +6,16 @@
 #include "../hal/fm1_eq.h"
 #define FX_RATE (FS/4u)
 #define FX_REV_DIV 8u
+/* VINTAGE Reverb switches (each one only adds code to the SRAM kernel fx_reverb; the build rejects that kernel if it needs one more
+ * register: "reference to ROM address"). Raise them one at a time, and go back one step if the build fails.
+ *   FX_REV_SMOOTH  0 = none, 1 = one pole, 2 = two poles on the interpolated wet output (removes the shrill 5.5 kHz images)
+ *   FX_REV_KNEE    1 = wet limiter linear to +-20000 (instead of the tanh-from-zero softclip) */
+#ifndef FX_REV_SMOOTH
+#define FX_REV_SMOOTH 0
+#endif
+#ifndef FX_REV_KNEE
+#define FX_REV_KNEE 0
+#endif
 enum { FX_OFF, FX_PHASER, FX_WIDTH, FX_FORMANT, FX_TAPE, FX_SPIT, FX_ECHO, FX_ROOM, FX_REVERB, FX_CHORUS, FX_COUNT };
 typedef struct { float b0,b1,b2,a1,a2,z1,z2; } fx_bq_t;
 typedef struct {
@@ -22,7 +32,6 @@ typedef struct {
     uint16_t rev_pos[8], rev_span[8], rev_ap[8];
     int32_t rev_damp[8], rev_gain[8], rev_input, rev_input2, rev_l, rev_r, rev_prev_l, rev_prev_r;
     int32_t rev_bass[8];
-    int32_t rev_i3, rev_i4, rev_z3, rev_z4, rev_pl, rev_pr; /* ATMOS: 3rd/4th integrator + combs of the reverb decimator, output smoothing */
     int16_t rev_rate, rev_char;
     float rev_dc;
 } fx_state_t;
@@ -288,9 +297,8 @@ static __attribute__((noinline,section(".audio_text"))) void fx_chorus(fx_state_
     f->pos=pos;f->rev_l=l;f->rev_r=r;f->mix=mix;
 }
 /* Eight-line orthogonal feedback tank, preceded by four input diffusers and
- * followed by two allpasses per output. Runs at FS/8. ATMOS: the input uses a 4th-order
- * CIC decimator (sinc^4, ~20-40 dB more alias rejection than the old 2nd-order one) and the
- * interpolated wet output goes through a one-pole smoother that removes the 5.5 kHz images. 1900 int16 samples fit one 4 KiB allocation.
+ * followed by two allpasses per output. Runs at FS/8 with input low-pass and
+ * interpolated wet output. 1900 int16 samples fit one 4 KiB allocation.
  * Unlike ROOM, the delays exchange energy and have length-normalised decay. */
 static const uint16_t REV_LEN[8] __attribute__((section(".data.fx_lengths")))={131,149,167,191,211,233,251,277};
 static const uint16_t REV_AP_LEN[8] __attribute__((section(".data.fx_lengths")))={23,31,43,61,19,29,37,47};
@@ -301,7 +309,7 @@ static void fx_reverb_setup(fx_state_t *f)
     f->rev_rate=f->rate;f->rev_char=f->character;
     float decay=300.0f+(float)(f->character*f->character)*(5700.0f/(127.0f*127.0f));
     for(uint32_t k=0;k<8u;k++){
-        f->rev_span[k]=(uint16_t)((uint32_t)REV_LEN[k]*(64u+(uint32_t)f->rate)/200u); /* VINTAGE: /200 (was /191): keeps >=4 samples of margin for the drift sweep; at SIZE max the read wrapped to a 1-4 sample delay (metallic whistle) */
+        f->rev_span[k]=(uint16_t)((uint32_t)REV_LEN[k]*(64u+(uint32_t)f->rate)/200u); /* VINTAGE: /200 (was /191): keeps >=4 samples of margin for the drift sweep; at SIZE max the read wrapped to a 1-4 sample delay */
         float x=6.907755f*(float)f->rev_span[k]*(1000.0f*FX_REV_DIV)/((float)FS*decay);
         f->rev_gain[k]=(int32_t)(65536.0f*(1.0f-x*0.5f)/(1.0f+x*0.5f));
     }
@@ -313,25 +321,24 @@ static inline __attribute__((always_inline)) int32_t fx_reverb_mul(int32_t x,uin
 }
 /* The existing softclip curve, inlined to avoid a SRAM-to-flash helper call
  * in the standard profile. No new lookup table or synth behavior. */
+/* VINTAGE: wet limiter with a knee: linear to +-20000, tanh-curved above (+-31570 at most). The plain softclip above bends every
+ * peak over ~10000, and those odd harmonics at the 5.5 kHz rate alias and image into the shrill sizzle. */
+static inline __attribute__((always_inline)) int32_t fx_reverb_knee(int32_t x)
+{
+    int32_t a=x<0?-x:x;
+    if(a>20000){
+        int32_t u=(a-20000)*175,i=u>>14,fr=(u>>6)&255,y;
+        if(i>=256)y=TANH_Q15[256];else y=TANH_Q15[i]+(((TANH_Q15[i+1]-TANH_Q15[i])*fr)>>8);
+        a=20000+((12000*y)>>15);
+    }
+    return x<0?-a:a;
+}
 static inline __attribute__((always_inline)) int32_t fx_reverb_softclip(int32_t x)
 {
     int32_t a=x<0?-x:x,i=a>>8,y;
     if(i>=256)y=TANH_Q15[256];
     else y=TANH_Q15[i]+((TANH_Q15[i+1]-TANH_Q15[i])*(a&255)>>8);
     return x<0?-y:y;
-}
-/* ATMOS: wet limiter with a knee. The old softclip was a tanh from zero, so it bent every wet peak above ~10000 and made
- * odd harmonics at the 5.5 kHz rate (they alias and image into the shrill sizzle). Linear to +-20000, tanh-curved after it,
- * +-31570 at most. */
-static inline __attribute__((always_inline)) int32_t fx_reverb_knee(int32_t x)
-{
-    int32_t a=x<0?-x:x;
-    if(a>20000){
-        int32_t u=(a-20000)*175,i=u>>14,fr=(u>>6)&255,y;      /* (a - 20000) / 93.7 = tanh's argument in 1/128 steps */
-        if(i>=256)y=TANH_Q15[256];else y=TANH_Q15[i]+(((TANH_Q15[i+1]-TANH_Q15[i])*fr)>>8);
-        a=20000+((12000*y)>>15);
-    }
-    return x<0?-a:a;
 }
 static inline __attribute__((always_inline)) int32_t fx_reverb_ap(fx_state_t *f,int16_t *mem,uint32_t k,int32_t x,uint32_t off)
 {
@@ -363,24 +370,19 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
 {
     /* DEPTH retains more body on each round trip and raises the wet return.
      * Keep this work at FS/8: no additional delay memory or synth-rate DSP. */
-    int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo; /* VINTAGE: difference/low stay in f->damp[0]/[1] */
-    /* ATMOS: the extra decimator/smoother state lives in f->, not in locals, so this SRAM kernel keeps the register pressure of the original
-     * (more live registers make the compiler call a ROM save/restore helper, which the build rejects). */
+    int32_t a=f->rev_input,b=f->rev_input2,previous=f->echo; /* VINTAGE: difference/low stay in f->damp[0]/[1]: two fewer live registers in this SRAM kernel */
     uint32_t phase=f->decim;
-    int32_t mix=f->mix,tone=90+f->character*60/127,level=((724+f->character*3)*9)>>4; /* VINTAGE: damping 90..150/256 (was 166..246: the highs recirculated), wet level 9/16 (was 5/8) */
+    int32_t mix=f->mix,tone=90+f->character*60/127,level=((724+f->character*3)*3)>>2; /* VINTAGE: damping 90..150/256 (was 166..246); wet level 3/4 */
     for(uint32_t i=0;i<n;i++){
         int32_t mono=fx_div_pow2(fx_left[i]+fx_right[i],1);
-        a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);f->rev_i3=(int32_t)((uint32_t)f->rev_i3+(uint32_t)b);f->rev_i4=(int32_t)((uint32_t)f->rev_i4+(uint32_t)f->rev_i3);
+        a=(int32_t)((uint32_t)a+(uint32_t)mono);b=(int32_t)((uint32_t)b+(uint32_t)a);
         if(!phase){
-            uint32_t comb=(uint32_t)f->rev_i4-(uint32_t)previous;previous=f->rev_i4;
-            uint32_t comb2=comb-(uint32_t)f->damp[0];f->damp[0]=(int32_t)comb;
-            uint32_t comb3=comb2-(uint32_t)f->rev_z3;f->rev_z3=(int32_t)comb2;
-            int32_t input=fx_div_pow2((int32_t)(comb3-(uint32_t)f->rev_z4),12);f->rev_z4=(int32_t)comb3;   /* sinc^4 /8^4 */
+            uint32_t comb=(uint32_t)b-(uint32_t)previous;previous=b;
+            int32_t input=fx_div_pow2((int32_t)(comb-(uint32_t)f->damp[0]),6);f->damp[0]=(int32_t)comb;
             f->damp[1]=fx_div_pow2(f->damp[1]+7*input,3);input=f->damp[1];
             /* Cheap rate-conversion compensation restores upper-mid body
              * without increasing the bass return or allocating another filter. */
-            /* VINTAGE: the edge shelf (+6 dB at the band edge) is gone: that is where the decimator's alias residue and the interpolator's
-             * images live, and boosting it was the shrill sizzle. */
+            /* VINTAGE: edge shelf removed (it lifted the band edge, where alias residue and images live) */
             int32_t v[8],x;uint32_t off=0;
             f->rev_dc+=((float)input-f->rev_dc)*0.006f;
             x=fx_limit(fx_div_pow2((int32_t)((float)input-f->rev_dc),2),-16000,16000);
@@ -416,12 +418,26 @@ static __attribute__((noinline,section(".dsp_text"))) void fx_reverb(fx_state_t 
             r=fx_reverb_ap(f,mem,6,r,off);off+=REV_AP_LEN[6];r=fx_reverb_ap(f,mem,7,r,off);
             /* Round only hot wet peaks; the dry signal remains untouched. */
             f->rev_prev_l=f->rev_l;f->rev_prev_r=f->rev_r;
+#if FX_REV_KNEE
             f->rev_l=fx_reverb_knee(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_knee(fx_div_pow2(r*level,8));
+#else
+            f->rev_l=fx_reverb_softclip(fx_div_pow2(l*level,8));f->rev_r=fx_reverb_softclip(fx_div_pow2(r*level,8));
+#endif
         }
         int32_t l=f->rev_prev_l+fx_div_pow2((f->rev_l-f->rev_prev_l)*(phase+1u),3);
         int32_t r=f->rev_prev_r+fx_div_pow2((f->rev_r-f->rev_prev_r)*(phase+1u),3);
-        f->rev_pl+=fx_div_pow2((l-f->rev_pl)*2,3);f->rev_pr+=fx_div_pow2((r-f->rev_pr)*2,3);   /* ATMOS: smooth the linear interpolation (kills the 5.5 kHz images) */
-        fx_return(target,0,0,i,f->rev_pl,f->rev_pr,&mix);
+#if FX_REV_SMOOTH>=2
+        /* VINTAGE: two-pole smoothing of the interpolated wet (removes the 5.5 kHz images). The states live in fields that are idle in
+         * Reverb mode, so the struct does not grow: damp[3]/random = first pole L/R, damp[2]/pos = second pole L/R. */
+        f->damp[3]+=fx_div_pow2((l-f->damp[3])*2,3);f->random+=fx_div_pow2((r-f->random)*2,3);
+        f->damp[2]+=fx_div_pow2((f->damp[3]-f->damp[2])*2,3);f->pos=(uint32_t)((int32_t)f->pos+fx_div_pow2((f->random-(int32_t)f->pos)*2,3));
+        fx_return(target,0,0,i,f->damp[2],(int32_t)f->pos,&mix);
+#elif FX_REV_SMOOTH==1
+        f->damp[3]+=fx_div_pow2((l-f->damp[3])*2,3);f->random+=fx_div_pow2((r-f->random)*2,3);
+        fx_return(target,0,0,i,f->damp[3],f->random,&mix);
+#else
+        fx_return(target,0,0,i,l,r,&mix);
+#endif
         phase=(phase+1u)&7u;
     }
     f->mix=mix;f->decim=(uint8_t)phase;f->rev_input=a;f->rev_input2=b;f->echo=previous;

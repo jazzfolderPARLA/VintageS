@@ -138,12 +138,16 @@ static struct {
     uint8_t act;                 /* action pages: the column whose action OCT+ does, + 1; 0 = none (act_col) */
     uint32_t rec_t0;             /* REC press time (transport only) */
     uint32_t seq_t0;             /* SEQ held: direct SONG entry */
+    uint32_t arp_t0;             /* ATMOS: ARP press time (btn_hold: tap = arpeggiator on / off, held = its page) */
+    uint32_t scl_t0;             /* ATMOS: SCL press time (btn_hold: tap = next bank, held = the sound list) */
+    uint32_t play_t0;            /* ATMOS: PLAY press time (btn_hold: tap = the view / metronome off, held = the metronome) */
     uint32_t save_t0;            /* SAVE press time (btn_hold: held = project quick save) */
     uint32_t edit_t0;            /* EDIT press time (btn_hold: held = UNDO) */
     uint32_t oct_t0;             /* OCT+ press time (btn_hold: held = the page's sheet, ui_popup.c) */
     uint8_t confirm;             /* the OCT- / OCT+ dialog: CF_*, 0 = none */
     uint8_t confirm_trk;         /* the track it clears, the slot it overwrites */
     uint8_t uslot;               /* SAVE > USER: the selected user preset slot */
+    uint8_t qsv, qsv_arm;        /* SAVE > USER as the quick save: on; the slot (+1) armed for a second SAVE to overwrite */
     uint8_t song_row;            /* SONG: row selected, count selects the next empty row */
     uint8_t uboot;               /* main.c: seconds left before UPDATE MODE (OCT- + OCT+ held), 0 = none */
     uint8_t proj_new;            /* SAVE > PROJECT: KNOB 1 past TMPL, NEW (a new song: ui_new.c); SLOT unchanged */
@@ -196,7 +200,7 @@ static uint32_t drum_hit_selected(void);
 static const page_t *cur_page(void) { return page_over ? page_over : &PAGES[ui.page]; }
 
 /* the quick layers (ui_layer.c): a button held, the keys and KNOB 1..4 are its shortcuts, its map over the page */
-enum { LAYER_NONE, LAYER_RESERVED, LAYER_GLO, LAYER_SCL, LAYER_N };
+enum { LAYER_NONE, LAYER_RESERVED, LAYER_GLO, LAYER_N, LAYER_SCL = 255 };   /* ATMOS: the SCL layer (root, scale, chord) is gone; SCL is the bank button */
 static void draw_layer(void);
 static const char *layer_head(void);
 static uint32_t layer_leds(void);
@@ -341,6 +345,7 @@ static void page_entered(void)
     seq_midi_reset();
     ui.hot_t = 0;                                /* clear the previous page's emphasis */
     ui.act = 0;
+    ui.qsv = ui.qsv_arm = 0;                     /* (open_family sets the quick save after this) */
     ui.proj_new = 0;
     ui.ptc_on = 0;
     if (pg->graph == GR_BROWSE) {                /* (OCT- goes back to the sound from before: its loads, a level */
@@ -513,6 +518,18 @@ static int fam_has(uint32_t fam, uint32_t page)         /* page: one the family'
     return page < NPAGES && (native_page(page, fam) || PAGES[page].fam == fam) && page_visible(page);
 }
 
+/* SAVE: the quick save's first slot: the one the sound came from (in this list), else the first empty one */
+static void save_pick_slot(void)
+{
+    uint32_t n = user_limit(), k = user_of(TSEL);
+    if (k < n && (TSEL->user_native != 0) == (library_native() != 0)) {
+        ui.uslot = (uint8_t)k;
+        return;
+    }
+    for (k = 0; k < n && (user_used(k) || user_old(k)); k++) {}
+    ui.uslot = (uint8_t)(k < n ? k : 0u);
+}
+
 static void open_family(uint32_t fam)
 {
     if ((fam == FAM_ENV || fam == FAM_LFO) && native_titles(fam)) {   /* ENV / LFO of the Prophet, FM6, CZ-1 */
@@ -543,8 +560,12 @@ static void open_family(uint32_t fam)
     ui.fam_last[fam] = ui.page;
     ui.home = 0;
     page_entered();
-    if (fam == FAM_SAVE && cur_page()->graph == GR_USER)
-        slot_save_sheet();                       /* SAVE: USER; OCT+ then its slot's sheet on Save here (ui_slots.c) */
+    if (fam == FAM_SAVE && cur_page()->graph == GR_USER) {   /* SAVE: the quick save: PRESETS picks the slot, SAVE does it */
+        save_pick_slot();
+        ui.qsv = 1;
+        ui_message("PRESETS: PICK SLOT");
+        str_cpy(ui.msg2, "SAVE: OK  HOME: EXIT", sizeof ui.msg2);
+    }
 }
 
 /* GLO always enters the mixer from another family. Subsequent taps visit the
@@ -892,6 +913,18 @@ static uint32_t preset_rank(const engine_t *e, uint32_t k) { (void)e; return k; 
 
 
 /* preset pi of the engine the track asked for: the sound only (not the steps, not param_kept) */
+#include "atmos_state.h"
+/* OBERVAVE and JUPITER-8 play alone (one part each: their voices are heavy) */
+static int atmos_solo_engine(uint32_t e) { return (MELODEE_OBV && e == ENGI_OBV) || (MELODEE_JU08 && e == ENGI_JU08); }
+static const char *atmos_solo_msg(uint32_t e) { return e == ENGI_JU08 ? "JUPITER-8: SINGLE ONLY" : "OBERVAVE: SINGLE ONLY"; }
+/* whatever loads one of them on the selected track puts the mode back to SINGLE */
+static void atmos_single_only(track_t *t)
+{
+    if (t == TSEL && atmos.mode != ATMOS_SINGLE) {
+        atmos.mode = ATMOS_SINGLE;
+        ui_message(atmos_solo_msg(t->eng_req));
+    }
+}
 static void apply_preset_to(track_t *t, uint32_t pi)
 {
     const engine_t *e = ENGINES[t->eng_req % NENGINES];
@@ -921,6 +954,14 @@ static void apply_preset_to(track_t *t, uint32_t pi)
     t->p[P_ED_FLT] = pr->fenv;
     t->p[P_VOICE] = pr->mono ? V_LEGATO : V_POLY;   /* mono presets keep the legato feel */
     if(t->eng_req==ENGI_PROPHET)p5_preset_loaded(t,pi);
+    if (MELODEE_OBV && t->eng_req == ENGI_OBV) {
+        obv_preset_loaded(t, pi);
+        atmos_single_only(t);                           /* (OBERVAVE plays alone: ui_input.c) */
+    }
+    if (MELODEE_JU08 && t->eng_req == ENGI_JU08) {
+        j8_preset_loaded(t, pi);
+        atmos_single_only(t);                           /* (JUPITER-8 plays alone) */
+    }
     cz_factory_loaded(t);
     cz_track_accept(t);
     fm6_track_loaded(t);                              /* FM6: the preset's patch */
@@ -943,7 +984,7 @@ static void engine_load_of(track_t *t, uint32_t ei, uint32_t pi)
     load_end(t);
 }
 /* the engine's defaults and its first preset (PROPHET: Sequential's first factory program, not INIT) */
-static void set_engine_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, ei % NENGINES == ENGI_PROPHET ? 1u : 0u); }
+static void set_engine_of(track_t *t, uint32_t ei) { engine_load_of(t, ei, ei % NENGINES == ENGI_PROPHET || (MELODEE_OBV && ei % NENGINES == ENGI_OBV) || (MELODEE_JU08 && ei % NENGINES == ENGI_JU08) ? 1u : 0u); }
 
 /* the engine's own starting point, nothing changed: its INIT preset (Prophet, CZ-1, SID, FM6: "INIT .."), else
  * its first (DRUM: the 808 kit) */
@@ -983,11 +1024,15 @@ static void select_engine(uint32_t e)
 
 #include "browse.c"                     /* the PRESETS list: LIST, categories, RECENT, browsing */
 
+static int preset_favorite_of(const track_t *t)         /* ATMOS: for any track (the Stage's layer B too) */
+{
+    uint32_t k = user_of(t);
+    uint32_t e=t->eng_req;
+    return favorite_has(k<USER_NONE ? (t->user_native?(e==ENGI_PROPHET?USER_NATIVE_P5:e==ENGI_FM6?USER_NATIVE_FM:USER_NATIVE_CZ):USER_GENERAL) : e,k<USER_NONE?k:t->preset);
+}
 static int preset_favorite(void)
 {
-    uint32_t k = user_of(TSEL);
-    uint32_t e=TSEL->eng_req;
-    return favorite_has(k<USER_NONE ? (TSEL->user_native?(e==ENGI_PROPHET?USER_NATIVE_P5:e==ENGI_FM6?USER_NATIVE_FM:USER_NATIVE_CZ):USER_GENERAL) : e,k<USER_NONE?k:TSEL->preset);
+    return preset_favorite_of(TSEL);
 }
 static void preset_mark(int on)
 {
@@ -1098,7 +1143,7 @@ static const param_desc_t *home_param(uint32_t k, int16_t **vp)
 /* select track i (KNOB 1 on TRACKS, the editor): its sound, pages and pattern from now on */
 static void track_select(uint32_t i)
 {
-    if (i >= NTRK || i == song.sel)
+    if (i >= NTRK || i == song.sel || i != 0u)      /* ATMOS: layer A is always track 1, layer B track 2 */
         return;
     browse_commit();                             /* (a sound still pending loads into the track it was meant for) */
     momentary_restore();

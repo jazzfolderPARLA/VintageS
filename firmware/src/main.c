@@ -156,24 +156,32 @@ static void melodee_init(void)
     ui.force = 1;
 }
 
-/* ATMOS splash: "FM MODULE" in 70s racing stripes. Plain RGB565 fills and the existing 30 px UI font:
- * no new font, asset or generator step. The credits in the About menu (ui_menu.c) are untouched. */
-#define SPL_BG    0x18A2u   /* dark brown */
-#define SPL_RED   0xD263u
-#define SPL_ORG   0xF444u
-#define SPL_MUST  0xF5A3u   /* mustard */
-#define SPL_CREAM 0xF738u
+/* Boot splash: the VINTAGE MODULE cover (splash_img.h: 240 x 240, 32 colours, run-length coded, 12 KB). The LCD's DMA
+ * reads from RAM only, so each row is expanded into lcd_fillbuf (one row) and sent; the palette is already in the
+ * panel's byte order. `sub` is kept for the callers (STARTING UP / LIVE PERFORMANCE) but the picture has no room for it. */
+#include "splash_img.h"
 static void splash_draw(const char *sub)
 {
-    static const uint16_t band[4] = {SPL_RED, SPL_ORG, SPL_MUST, SPL_CREAM};
-    uint32_t i;
-    lcd_fill(0, 0, 240, 240, SPL_BG);
-    for (i = 0; i < 4u; i++) {
-        lcd_fill(0, 52u + i * 8u, 240u - i * 28u, 6, band[i]);            /* above: shrinking toward the title */
-        lcd_fill((3u - i) * 28u, 156u + i * 8u, 240u - (3u - i) * 28u, 6, band[3u - i]);   /* below: mirrored */
+    const uint8_t *p = SPLASH_RLE;
+    uint32_t x, y, c = 0, left = 0;
+    (void)sub;
+    lcd_sync();
+    lcd_window(0, 0, 239, 239);
+    for (y = 0; y < 240u; y++) {
+        lcd_sync();                               /* the previous row's DMA must finish before its buffer changes */
+        for (x = 0; x < 240u; x++) {
+            if (!left) {                          /* next run: colour << 3 | (n - 1); n - 1 = 7: 8 + the next byte */
+                uint32_t t = *p++;
+                c = t >> 3;
+                left = (t & 7u) + 1u;
+                if ((t & 7u) == 7u)
+                    left += *p++;
+            }
+            lcd_fillbuf[x] = SPLASH_PAL[c];
+            left--;
+        }
+        lcd_data(lcd_fillbuf, 240u * 2u);
     }
-    draw_text_line(0, 94, 240, &AF_L, "FM MODULE", SPL_CREAM, SPL_BG, 1);
-    draw_text_line(0, 130, 240, &AF_S, sub, SPL_MUST, SPL_BG, 1);
 }
 
 static void fm1_main(void)
@@ -239,6 +247,13 @@ static void fm1_main(void)
     glo_restore();                            /* CLK TUNE MIDI ROUT as last used, */
     project_boot();                           /* then the BOOT project or the template (theirs win) */
     fm1_delay_ms(400);
+    {   /* the splash stays 1 s longer: 10 x 100 ms, the watchdog fed between */
+        uint32_t i;
+        for (i = 0; i < 10u; i++) {
+            fm1_wdt_feed();
+            fm1_delay_ms(100);
+        }
+    }
     if (boot_work.state != 2u)
         lcd_fill(0, 0, 240, 240, T_BG);
 

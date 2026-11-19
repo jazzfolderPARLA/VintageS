@@ -19,6 +19,7 @@
  * note-off held the note until the next pad). Following the content cannot drift.
  * The count still tells an overrun (more than the ring since the last poll). */
 #include "../hal/fm1_uart.h"   /* registers; relative, so the host tests find it too */
+#include "atmos_state.h"       /* ATMOS: midi_rx_trs, the header's MIDI dot */
 
 #define UM_RING 128u
 #define UM_EMPTY 0xFDu         /* undefined MIDI realtime byte: never sent, marks unread slots */
@@ -44,15 +45,9 @@ static uint32_t um_len(uint32_t s)                 /* data bytes of a channel st
 
 static void um_byte(uint32_t b)
 {
-    if (b >= 0xF8u) {
-        if (b == 0xFAu || b == 0xFBu || b == 0xFCu) {   /* ATMOS: 0xF8 (clock) and 0xFE (active sensing) are dropped here, at once */
-            if (midi_enqueue(0xFu | b << 8, 2u))
-                um.msgs++;
-            else
-                um.drops++;
-        }
-        return;                                    /* realtime keeps running status */
-    }
+    if (b >= 0xF8u)                                /* ATMOS: every real-time byte (clock, start / stop, active sensing) is dropped at once:
+                                                    * there is no sequencer to run. It keeps running status. */
+        return;
     if (b & 0x80u) {
         um.sysex = b == 0xF0u;
         um.st = b < 0xF0u ? (uint8_t)b : 0;        /* system common/SysEx cancel running status */
@@ -72,7 +67,7 @@ static void um_byte(uint32_t b)
         uint32_t pkt = (um.st >> 4) | (uint32_t)um.st << 8 | d1 << 16 | d2 << 24;
         um.got = 0;
         if (midi_enqueue(pkt, 2u)) {
-            um.msgs++;
+            { um.msgs++; midi_rx_trs++; }
         } else {
             midi_in_overflow = 1;
             um.drops++;

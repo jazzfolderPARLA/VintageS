@@ -3,6 +3,7 @@
 /* Engine output -> optional stereo insert -> track level -> master.
  * The bypass retains the original level/pan/spread path exactly. */
 #include "fx.c"
+#include "atmos_state.h"             /* ATMOS: atmos_vu_peak, the monitor's VU meter */
 static int32_t part_buf[CTL], mix_l[CTL], mix_r[CTL];
 static uint8_t fx_send_on;
 static uint32_t fx_extra_gain[FX_SLOTS-1u];
@@ -249,4 +250,12 @@ static void mix_block(int32_t *out,uint32_t n)
     fx_bus_join();
     void (*volatile run)(int32_t *,uint32_t)=master_samples;
     run(out,n);
+    {   /* ATMOS: the output's peak, for the monitor's VU meter */
+        uint32_t i, pk = atmos_vu_peak;
+        for (i = 0; i < 2u * n; i++) {
+            uint32_t a = (uint32_t)(out[i] < 0 ? -out[i] : out[i]);
+            if (a > pk) pk = a;
+        }
+        atmos_vu_peak = pk;
+    }
 }

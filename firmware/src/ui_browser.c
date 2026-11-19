@@ -31,6 +31,7 @@ static int browser_shown_fav(void)                      /* the sound shown is a 
     src = preset_at(brw.n, &k);
     return favorite_has(src, k);
 }
+static const char *atmos_bank_word(uint32_t b);       /* (ui_input.c) */
 static int browser_can_back(void) { return browse_loads != browse_mark || browse_pending(); }
 
 /* the top: "2 · BASS" in the track's colour, the list's length (or the message) at the right */
@@ -45,7 +46,7 @@ static void browser_top(uint32_t total)
     brv.top = sig;
     chip[0] = (char)('1' + song.sel % NTRK);
     str_cpy(chip + 1, " \xb7 ", 4);
-    str_cpy(chip + 4, list_name(list_mode()), 10);
+    str_cpy(chip + 4, list_bank_on() ? atmos_bank_word(atmos_bank_of(TSEL->eng_req)) : list_name(list_mode()), 10);   /* (SCL held: the bank) */
     cv_begin(240, BR_TOP_H, T_BG);
     cw = text_w(&AF_X, chip) + 16;
     cv_rrect(8, 6, cw, 15, 4, T_THEME, T_BG);
@@ -64,6 +65,22 @@ static void browser_top(uint32_t total)
 static void browser_side(void)
 {
     uint32_t m = list_mode(), first, r, sig = m * 7u + ux.gen * 977u + ux.pal * 31u + song.sel;
+    if (list_bank_on()) {                               /* SCL held: no LIST, just the bank's letter */
+        uint32_t b = atmos_bank_of(TSEL->eng_req);
+        char l[2];
+        sig = 0x5A5A0000u + b * 131u + ux.gen * 977u + ux.pal * 31u + song.sel;
+        if (!ui.force && sig == brv.side)
+            return;
+        brv.side = sig;
+        l[0] = (char)(b < ATMOS_NBANK ? 'A' + b : '-');
+        l[1] = 0;
+        cv_begin(BR_SIDE_W, BR_BODY_H, T_BG);
+        cv_text_c(35, 56, &AF_L, l, T_THEME, T_BG);
+        cv_text_c(35, 100, &AF_X, "BANK", T_MID, T_BG);
+        cv_rect(70, 2, 1, BR_BODY_H - 2, T_LINE);
+        cv_blit(0, BR_TOP_H);
+        return;
+    }
     if (!ui.force && sig == brv.side)
         return;
     brv.side = sig;

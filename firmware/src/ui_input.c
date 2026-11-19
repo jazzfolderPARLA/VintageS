@@ -27,6 +27,17 @@ static void led_put(uint8_t *nl, uint32_t id, int on)
     if (q != 0xFF && on)
         nl[q >> 3] |= (uint8_t)(1u << (q & 7u));
 }
+/* ATMOS: sets or clears one LED (led_put only lights) */
+static void led_set(uint8_t *nl, uint32_t id, int on)
+{
+    uint8_t q = led_pos[id];
+    if (q == 0xFF)
+        return;
+    if (on)
+        nl[q >> 3] |= (uint8_t)(1u << (q & 7u));
+    else
+        nl[q >> 3] &= (uint8_t)~(1u << (q & 7u));
+}
 static int led_get(const uint8_t *nl, uint32_t id)
 {
     uint8_t q = led_pos[id];
@@ -113,42 +124,34 @@ static int pattern_keys_on(void)
 /* the pattern keys (SEQ held), as the keys show things everywhere: bright the pattern playing (and the one held to copy),
  * dim the others that hold something, breathing the one waiting for the bar; the empty ones dark */
 static uint32_t pattern_leds(uint32_t *dim, uint32_t *breath)
-{
-    uint32_t m = 1u << PAT_KEY[TSEL->pattern], b;
+{   /* ATMOS: with SEQ held the keys set the split point: the key that is the split point lights */
+    uint32_t m = 0, k;
     *dim = *breath = 0;
-    for (b = 0; b < NPAT; b++)
-        if (b != TSEL->pattern && pattern_used(song.sel, b))
-            *dim |= 1u << PAT_KEY[b];
-    if (TSEL->pattern_next < NPAT) *breath = 1u << PAT_KEY[TSEL->pattern_next];
-    if (ui.pat_key) m |= 1u << PAT_KEY[ui.pat_key - 1u];
-    *dim &= ~(m | *breath);
-    *breath &= ~m;
+    for (k = 0; k < 27u; k++)
+        if (kb_map(TSEL, k) == atmos.split_point)
+            m |= 1u << k;
     return m;
 }
+static void atmos_split_say(void);                      /* below */
 static void pattern_keys(uint32_t notes)
-{
-    if (ui.pat_key && ui.pat_track != song.sel) ui.pat_key = ui.pat_copy = 0;
-    if (pattern_keys_on()) {
-        for (uint32_t b = 0; b < NPAT; b++) if (notes & (1u << PAT_KEY[b])) {
+{   /* ATMOS: SEQ held + a key: that key's note is the new split point and the mode becomes SPLIT (notes below it
+     * play layer B). Its release is then no SEQ tap (no mode change). */
+    uint32_t k;
+    if (!pattern_keys_on() || !notes)
+        return;
+    for (k = 0; k < 27u; k++)
+        if ((notes >> k) & 1u) {
+            uint32_t n = kb_map(TSEL, k);
+            if (n > 127u)
+                continue;
             ui.seq_t0 |= 2u;
-            if (!ui.pat_key) { ui.pat_key = (uint8_t)(b + 1u); ui.pat_track = song.sel; ui.pat_copy = 0; }
-            else if (ui.pat_key != b + 1u) {
-                int rc = pattern_copy(TSEL, ui.pat_key - 1u, b);
-                ui.pat_copy = 1;
-                ui_message(rc == 2 ? "PATTERN DATA FULL" : rc ? "STOP TO COPY" : "PATTERN COPIED");
-                ui.force = 1;
-            }
+            atmos.split_point = (uint8_t)n;
+            atmos.mode = ATMOS_SPLIT;
+            atmos_split_say();
+            settings_save();                            /* the split point is kept; the mode is not */
+            ui.force = 1;
+            break;
         }
-    }
-    if (ui.pat_key && (!pattern_keys_on() || !(fm1_in.notes & (1u << PAT_KEY[ui.pat_key - 1u])))) {
-        if (!ui.pat_copy) {
-            uint32_t bank = ui.pat_key - 1u;
-            if (pattern_request(TSEL, bank)) ui_message("STOP SONG TO SWITCH");
-            else { char b[12] = "PATTERN "; b[8] = (char)('1' + bank); b[9] = 0; ui_message(b); }
-            ui.entry_open = 0; cursor_set(0); ui.force = 1;
-        }
-        ui.pat_key = ui.pat_copy = 0;
-    }
 }
 /* key k of track t as the keys play now (LIGHTS): bright while it sounds (pressed, or its note held on the track by
  * a key or MIDI), dim when it plays something (a kit's or the slices' own map: every key; QNT OFF: the notes in the
@@ -182,8 +185,6 @@ static void ui_leds(void)
     uint8_t nl[FM1_NCOL] = {0}, nd[FM1_NCOL] = {0}, nb[FM1_NCOL] = {0}, nw[FM1_NCOL] = {0};
     uint32_t k, c, play, lights = settings_lights % LIGHTS_N, pdim = 0, pbr = 0;
     uint32_t fam = cur_fam();
-    uint32_t armed = song.rec != 0u, rolling = song.playing != 0u, counting = (uint32_t)seq_counting();
-    uint32_t recording_now = (song.rec & ~song.rec_wait) && rolling && !counting && !chain.running;
     static uint8_t ready;
     if (!ready) {
         led_pos_init();
@@ -195,10 +196,15 @@ static void ui_leds(void)
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
     if (ui.layer)                                       /* the layer's button blinks while its map is up */
         led_put(nl, panel.btn[layer_btn()], ((fm1_ms / 250u) & 1u) == 0u);
-    led_put(nl, panel.btn[B_PLAY], rolling && !counting); /* steady transport state, independent of audio block rate; */
-    led_put(nw, panel.btn[B_PLAY], counting);           /* counting in: waiting */
-    led_put(nl, panel.btn[B_REC], recording_now);
-    led_put(nw, panel.btn[B_REC], armed && !recording_now);
+    {   /* ATMOS: the SEQ LED: off in SINGLE, steady in DUAL, blinking at the internal tempo in SPLIT */
+        uint32_t beat_ms = beat_samples() * 1000u / FS, on = atmos.mode == ATMOS_DUAL;
+        if (atmos.mode == ATMOS_SPLIT)
+            on = beat_ms >= 2u ? (fm1_ms % beat_ms) < beat_ms / 2u : 1u;
+        led_set(nl, panel.btn[B_SEQ], (int)on);
+    }
+    led_set(nl, panel.btn[B_PLAY], atmos_view != 0u);        /* ATMOS: PLAY lit while the monitor is up */
+    led_put(nl, panel.btn[B_REC], preset_favorite());                 /* ATMOS: REC lit = the sound is a favourite, */
+    led_put(nw, panel.btn[B_REC], list_mode() == LM_FAV);            /* breathing = in the favourites view */
     k = oct_leds();
     led_put(nl, panel.btn[B_OCTDN], (int)(k & 1u));
     led_put(nl, panel.btn[B_OCTUP], (int)(k >> 1));
@@ -282,28 +288,14 @@ static int32_t list_accel(uint32_t role, int32_t s, uint32_t total, uint32_t *fa
     return accel_by(role, s, total > 256u ? 16u : total > 64u ? 8u : total > 16u ? 4u : 1u, fast);
 }
 
-/* MIXER page: KNOB 1 LEVEL, 2 PAN, 3 unused, 4 MUTE of the selected track (right = ON, left = OFF: the
- * track itself is ALGORITHM's, on every page). Pattern length stays on SEQ. */
+/* MIXER page (GLO): KNOB 1 LEVEL of track 1, KNOB 2 LEVEL of track 2, KNOB 3 PAN of track 1, KNOB 4 PAN of
+ * track 2. Tracks 3 and 4 are not on this page; it does not follow ALGORITHM's selected track. */
 static void tracks_edit(uint32_t slot, int32_t steps)
 {
-    track_t *t = TSEL;
-    int16_t *vp;
-    const param_desc_t *d;
-    switch (slot) {
-    case 3:
-        t->p[P_MUTE] = (int16_t)(steps > 0);
-        return;
-    case 0:
-        vp = &t->p[P_LEVEL];
-        d = &TP[P_LEVEL];
-        break;
-    case 2:
-        return;
-    default:
-        vp = &t->p[P_PAN];
-        d = &TP[P_PAN];
-        break;
-    }
+    track_t *t = &trk[slot & 1u];
+    uint32_t id = slot < 2u ? P_LEVEL : P_PAN;
+    int16_t *vp = &t->p[id];
+    const param_desc_t *d = &TP[id];
     *vp = (int16_t)clamp(*vp + accel(EN_K1 + slot, steps, d->max - d->min), d->min, d->max);
     motion_capture(t, (uint32_t)(vp - t->p), *vp);
 }
@@ -369,11 +361,61 @@ static void qsave_chord(void)
     }
     qsave_req = 1;
 }
+/* SAVE > USER, the quick save: the sound goes to the slot picked (KNOB 1 / PRESETS), with its effects where the preset
+ * keeps them (upreset.c). The slot it came from, or an empty one, is written at once (the same place: its name stays);
+ * another sound's slot asks for a second SAVE. No sheet, no NAME screen. HOME leaves. SAVE held: back to its own slot */
+static uint32_t save_origin(void)                       /* the slot the sound came from in this list, else USER_NONE */
+{
+    uint32_t k = user_of(TSEL);
+    return k < user_limit() && (TSEL->user_native != 0) == (library_native() != 0) ? k : USER_NONE;
+}
+static void save_to(uint32_t k)
+{
+    char nm[24];
+    if (MELODEE_OBV && TSEL->eng_req == ENGI_OBV) {
+        ui_message("OBERVAVE: NO SAVE YET");            /* (its own preset record comes later) */
+        return;
+    }
+    if (MELODEE_JU08 && TSEL->eng_req == ENGI_JU08) {
+        ui_message("JUPITER-8: NO SAVE YET");           /* (its own preset record comes later) */
+        return;
+    }
+    if (transport_busy()) {
+        ui_message("STOP TO SAVE");
+        return;
+    }
+    nm[0] = 0;
+    if (k == save_origin())
+        user_name(k, nm);                               /* the same place: it keeps its name */
+    else
+        trk_short_name(song.sel, nm);                   /* else the sound's own */
+    user_ui_named(2u, k, nm);
+    if (user_used(k)) {                                 /* saved: the sound now comes from there */
+        TSEL->user = (uint8_t)(k + 1u);
+        TSEL->user_native = (uint8_t)(library_native() != 0);
+    }
+    ui.force = 1;
+}
+static void save_confirm(void)                          /* SAVE tapped on SAVE > USER */
+{
+    uint32_t k = ui.uslot % user_limit();
+    if (k != save_origin() && (user_used(k) || user_old(k)) && ui.qsv_arm != k + 1u) {
+        ui.qsv_arm = (uint8_t)(k + 1u);
+        ui_message("USED: SAVE AGAIN");                 /* another sound's slot */
+        return;
+    }
+    ui.qsv_arm = 0;
+    save_to(k);
+}
 static void qsave_poll(void)
 {
     if (qsave_req && !transport_busy() && !transport_req) {
+        uint32_t o = save_origin();
         qsave_req = 0;
-        project_quick_save();
+        if (o < USER_NONE)
+            save_to(o);                                 /* SAVE held: the sound back to its slot */
+        else
+            ui_message("TAP SAVE: PICK SLOT");
     }
 }
 
@@ -814,7 +856,7 @@ static void edit_param(uint32_t slot, int32_t steps)
             select_engine(eng_step(TSEL->eng_req, steps));
         } else if (slot == 2u) {
             preset_mark(steps > 0);
-        } else if (slot == 0u) {                          /* ALL FAV RECENT, the categories (no wrap) */
+        } else if (slot == 0u && !list_bank_on()) {       /* ALL FAV RECENT, the categories (no wrap); not in the bank list */
             uint32_t m = (uint32_t)clamp((int32_t)list_mode() + (steps > 0 ? 1 : -1), 0, (int32_t)LM_N - 1);
             if (m != list_mode()) {
                 list_set(m);
@@ -838,6 +880,7 @@ static void edit_param(uint32_t slot, int32_t steps)
     if (pg->graph == GR_USER) {                           /* KNOB 1 the slot */
         if (slot == 0u)
             ui.uslot = (uint8_t)clamp((int32_t)ui.uslot + list_accel(EN_K1, steps, user_limit(), 0), 0, user_limit() - 1);
+        ui.qsv_arm = 0;
         return;
     }
     if (pg->graph == GR_MOD && slot == 1u) {             /* MOD: KNOB 2 the route; 1 its SRC, 3 DST, 4 AMT */
@@ -882,6 +925,24 @@ static void edit_param(uint32_t slot, int32_t steps)
         return;
     }
     if (pg->scope == SC_GLOBAL && pg->id[slot] == G_A4) {
+        settings_save();
+        return;
+    }
+    if (pg->scope == SC_GLOBAL && pg->id[slot] >= G_SUSPOL && pg->id[slot] <= G_CH_B) {   /* GLO pages 2..4: device settings, saved */
+        uint32_t id = pg->id[slot];
+        if (id == G_SUSPOL) atmos_sus_inv = (uint8_t)(v != 0);
+        else if (id == G_VELCRV) atmos_vel = (uint8_t)(v == 0 ? 1u : v == 1 ? 0u : 2u);
+        else if (id == G_OCT_A) atmos_oct[0] = (int8_t)v;
+        else if (id == G_OCT_B) atmos_oct[1] = (int8_t)v;
+        else if (id == G_SEM_A) atmos_sem[0] = (int8_t)v;
+        else if (id == G_SEM_B) atmos_sem[1] = (int8_t)v;
+        else if (id == G_CH_A) atmos_ch[0] = (uint8_t)v;
+        else atmos_ch[1] = (uint8_t)v;
+        settings_save();
+        return;
+    }
+    if (pg->scope == SC_GLOBAL && (pg->id[slot] == G_BEND_A || pg->id[slot] == G_BEND_B)) {   /* GLO MIDI page: bend range, saved */
+        atmos_bend[pg->id[slot] == G_BEND_B] = (uint8_t)clamp(v, 0, 12);
         settings_save();
         return;
     }
@@ -1363,6 +1424,192 @@ static uint32_t btn_hold(uint32_t *t0, uint32_t label, uint32_t now, int hold_ok
     return tap ? BT_TAP : BT_NONE;
 }
 
+/* ATMOS banks, on the SCL button: A DX7 (the FM6 engine), B PROPHET-5, C JUNO-106, D CZ-1, E JUPITER 08 MINI, F OBERVAVE.
+ * SCL tap: the next bank, with the sound it had last (atmos.last[]); SCL held: the sound list (PRESETS page).
+ * (A bank whose engine is 255 would be skipped by the tap; none is now.) */
+static const uint8_t ATMOS_BANK_ENGINE[ATMOS_NBANK] = {ENGI_FM6, ENGI_PROPHET, ENGI_JUNO, ENGI_CZ,
+                                                     MELODEE_JU08 ? ENGI_JU08 : 255u, MELODEE_OBV ? ENGI_OBV : 255u};   /* E: JUPITER-8, F: OBERVAVE (single only) */
+static const char *const ATMOS_BANK_NAME[ATMOS_NBANK] = {"A  DX7", "B  PROPHET-5", "C  JUNO-106", "D  CZ / SID", "E  JUPITER 08 MINI", "F  OBERVAVE"};
+static const char *const ATMOS_BANK_WORD[ATMOS_NBANK] = {"DX7", "PROPHET-5", "JUNO-106", "CZ / SID", "JUPITER 08 MINI", "OBERVAVE"};   /* Stage's card */
+static const char *atmos_bank_word(uint32_t b) { return ATMOS_BANK_WORD[b % ATMOS_NBANK]; }
+static uint32_t atmos_bank_of(uint32_t e)
+{
+    if (e == ATMOS_ENGI_SID)                            /* bank D is CZ-1 and the SID (a tap gets CZ-1 first) */
+        return 3u;
+    for (uint32_t b = 0; b < ATMOS_NBANK; b++)
+        if (ATMOS_BANK_ENGINE[b] == e)
+            return b;
+    return 255u;
+}
+static void atmos_bank_step(int32_t dir)               /* dir > 0: the next bank (A -> B ...), dir < 0: the previous one */
+{
+    uint32_t cur = atmos_bank_of(TSEL->eng_req), b, n, e, pi, was;
+    if (cur >= ATMOS_NBANK)
+        cur = atmos.bank % ATMOS_NBANK;                 /* (the track plays another engine: from the last bank) */
+    else if (user_of(TSEL) >= USER_NONE && TSEL->preset < ATMOS_NPRE && TSEL->eng_req == ATMOS_BANK_ENGINE[cur])
+        atmos.last[cur] = (uint8_t)TSEL->preset;        /* the factory sound it leaves, for the way back */
+    b = cur;
+    for (n = 0; n < ATMOS_NBANK; n++) {
+        b = (b + (dir > 0 ? 1u : ATMOS_NBANK - 1u)) % ATMOS_NBANK;
+        if (ATMOS_BANK_ENGINE[b] != 255u)
+            break;
+    }
+    if (b == cur || ATMOS_BANK_ENGINE[b] == 255u)
+        return;
+    e = ATMOS_BANK_ENGINE[b];
+    pi = atmos.last[b];
+    if (pi >= ENGINES[e]->npresets)
+        pi = e == ENGI_PROPHET || e == ENGI_OBV || e == ENGI_JU08 ? 1u : 0u;   /* (Prophet, OBERVAVE, JUPITER-8: their first factory program, as set_engine_of) */
+    was = atmos.mode;
+    engine_load_of(TSEL, e, pi);                        /* (OBERVAVE puts the mode back to SINGLE: atmos_single_only) */
+    atmos.bank = (uint8_t)b;
+    atmos.preset = (uint8_t)(pi < ATMOS_NPRE ? pi : 0u);
+    ui_say("BANK ", ATMOS_BANK_NAME[b]);
+    if (atmos_solo_engine(e) && was != ATMOS_SINGLE)   /* OBERVAVE and JUPITER-8 play alone: no DUAL, no SPLIT */
+        str_cpy(ui.msg2, "SINGLE ONLY", sizeof ui.msg2);
+    ui.force = 1;
+    settings_save();
+}
+static void atmos_bank_next(void) { atmos_bank_step(1); }   /* SCL tap */
+static void atmos_open_list(uint32_t bank)             /* bank: the sounds of the playing bank only (SCL held), else the list as LIST has it */
+{
+    uint32_t k;
+    if (bank)
+        list_set(LM_ALL);                               /* never the favourites or a category (list_set also ends an old bank list) */
+    for (k = 0; k < NPAGES; k++)
+        if (PAGES[k].graph == GR_BROWSE)
+            break;
+    if (k >= NPAGES)
+        return;
+    ui.home = 0;
+    ui.page = (uint8_t)k;
+    list_bank = (uint8_t)(bank != 0u);                  /* (browse.c) */
+    ui.fam_last[PAGES[k].fam] = ui.page;
+    page_entered();
+    ui.force = 1;
+}
+
+/* ATMOS favourites, on the REC button: REC tap enters / leaves the favourites view (the PRESETS list kept to the
+ * starred sounds; PRESETS then scrolls only through them), REC held stars / unstars the sound that is playing. */
+static void atmos_fav_view(void)
+{
+    uint32_t total;
+    if (list_mode() == LM_FAV) {                        /* in it: out, to HOME with the whole list again */
+        list_set(LM_ALL);
+        go_home();
+        ui_message("FAVORITES OFF");
+    } else {
+        list_set(LM_FAV);
+        atmos_open_list(0u);
+        (void)list_cur(&total);
+        ui_message(total ? "FAVORITES" : "NO FAVORITES YET");
+    }
+    ui.force = 1;
+}
+static void atmos_fav_toggle(void)
+{
+    int on = !preset_favorite();
+    preset_mark(on);
+    ui_message(on ? "FAVORITE ADDED" : "FAVORITE REMOVED");
+}
+/* ATMOS layer B from the keys: SEQ held + PRESETS steps its sound (through its bank's list), SEQ held + ARP its bank.
+ * Layer B is the track after the selected one, so its sound is read from the track itself. */
+static void atmos_b_load(uint32_t e, uint32_t pi)
+{
+    uint32_t kb = atmos_b_track(song.sel % NTRK, NTRK), b = atmos_bank_of(e);
+    char nm[16];
+    engine_load_of(&trk[kb], e, pi);
+    if (b < ATMOS_NBANK) {
+        atmos.b_bank = (uint8_t)b;
+        atmos.b_preset = (uint8_t)(pi < ATMOS_NPRE ? pi : 0u);
+    }
+    trk_short_name(kb, nm);
+    ui_say("B  ", nm);
+    ui.force = 1;
+    settings_save();
+}
+static void atmos_b_step(int32_t s)
+{
+    uint32_t kb = atmos_b_track(song.sel % NTRK, NTRK), e = trk[kb].eng_req, n, pi;
+    if (atmos_bank_of(e) >= ATMOS_NBANK)                /* (a track on another engine: the bank last used for B) */
+        e = ATMOS_BANK_ENGINE[atmos.b_bank % ATMOS_NBANK];
+    n = ENGINES[eng_idx(e)]->npresets;
+    if (!n)
+        return;
+    pi = trk[kb].eng_req == e ? trk[kb].preset : 0u;
+    pi = (uint32_t)((((int32_t)pi + s) % (int32_t)n + (int32_t)n) % (int32_t)n);
+    atmos_b_load(e, pi);
+}
+static void atmos_b_bank_next(void)
+{
+    uint32_t kb = atmos_b_track(song.sel % NTRK, NTRK), cur = atmos_bank_of(trk[kb].eng_req), b, n, e;
+    if (cur >= ATMOS_NBANK)
+        cur = atmos.b_bank % ATMOS_NBANK;
+    b = cur;
+    for (n = 0; n < ATMOS_NBANK; n++) {
+        b = (b + 1u) % ATMOS_NBANK;
+        if (ATMOS_BANK_ENGINE[b] != 255u && !atmos_solo_engine(ATMOS_BANK_ENGINE[b]))   /* (OBERVAVE and JUPITER-8 are never layer B) */
+            break;
+    }
+    e = ATMOS_BANK_ENGINE[b];
+    atmos_b_load(e, e == ENGI_PROPHET ? 1u : 0u);
+    ui_say("LAYER B ", atmos_bank_word(b));
+}
+
+/* ATMOS ARP: tap = the arpeggiator on / off (the native one, seq.c: arp_tick; its REPEAT mode, the beat LED); held = its page.
+ * It acts on layer A and, in DUAL / SPLIT, on layer B too; coming back on it uses the mode it had (UP at first). */
+static uint8_t atmos_arp_last = 1;
+static void atmos_arp_toggle(void)
+{
+    uint32_t ka = song.sel % NTRK, kb = atmos_b_track(ka, NTRK);
+    int16_t cur = trk[ka].p[P_AMODE], nv;
+    if (cur) {
+        atmos_arp_last = (uint8_t)cur;
+        nv = 0;
+    } else {
+        nv = (int16_t)(atmos_arp_last ? atmos_arp_last : 1u);
+    }
+    trk[ka].p[P_AMODE] = nv;
+    if (atmos.mode != ATMOS_SINGLE)
+        trk[kb].p[P_AMODE] = nv;
+    ui_say("ARP ", nv ? N_AMODE[nv % 7] : "OFF");
+    ui.force = 1;
+}
+/* ATMOS PLAY: tap = the next view (the sounds / the monitor), held = PANIC (every note off). */
+static void atmos_view_next(void)
+{
+    static const char *const NAME[ATMOS_VIEW_N] = {"SOUNDS", "MONITOR"};
+    if (!ui.home)
+        go_home();
+    atmos_view = (uint8_t)((atmos_view + 1u) % ATMOS_VIEW_N);
+    ui_message(NAME[atmos_view]);
+    ui.force = 1;
+}
+static void atmos_panic(void)
+{
+    midi_in_overflow = 1;                               /* the whole MIDI reset: queue, channels, owners, chords, sustain */
+    panic_req = (uint8_t)((1u << NTRK) - 1u);           /* and every track lets go of what sounds, at once */
+    ui_message("PANIC  ALL NOTES OFF");
+    ui.force = 1;
+}
+/* in SPLIT the ALGORITHM encoder moves the split point a semitone (the tracks are fixed, it had nothing left to do) */
+static void atmos_split_say(void)
+{
+    char n[6], m[16];
+    stage_note_name(n, atmos.split_point);
+    str_cpy(m, "SPLIT ", 8);
+    str_cpy(m + 6, n, 6);
+    ui_message(m);
+}
+static void atmos_split_step(int32_t s)
+{
+    int32_t v = (int32_t)atmos.split_point + (s > 0 ? 1 : -1);
+    atmos.split_point = (uint8_t)(v < 0 ? 0 : v > 127 ? 127 : v);
+    atmos_split_say();
+    ui.force = 1;
+    settings_save();
+}
+
 /* the quick layers: ui_layer.c (included after this file) */
 static void layer_masks(void);
 static void layer_lock_input(uint32_t pressed);
@@ -1382,6 +1629,8 @@ static uint32_t ly_bit(uint32_t l);
 /* a page button let go (they act on release; a layer's own button: layer_gesture) */
 static void page_tap(uint32_t b)
 {
+    if (b == B_SCL)                                     /* ATMOS: SCL is the bank button: it opens no page (see atmos_bank_next) */
+        return;
     uint32_t f;
     if (b == B_EDIT && ui.erase_gesture) return;
     if (b == B_EDIT && smap.on) {                       /* the map open: EDIT closes it */
@@ -1642,7 +1891,17 @@ static void ui_input(void)
     uint32_t bank_notes = notes;
     uint32_t home = btn_hold(&ui.home_t0, B_HOME, now, 1);
     uint32_t rec = btn_hold(&ui.rec_t0, B_REC, now, !ui.menu && !ui.confirm && !name_on());   /* held: MIXER */
+    if (song.sel || song.g[G_ROUTE] != 1) {             /* ATMOS: layer A is track 1, B is track 2; MIDI IN always plays A (ROUT = SEL) */
+        song.sel = 0;
+        song.g[G_ROUTE] = 1;
+        ui.entry_open = 0;
+        ui.cursor = 0;
+        ui.force = 1;
+    }
     uint32_t seq = btn_hold(&ui.seq_t0, B_SEQ, now, !ui.menu && !ui.confirm);
+    uint32_t arp = btn_hold(&ui.arp_t0, B_ARP, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = arpeggiator on / off, held = its page */
+    uint32_t scl = btn_hold(&ui.scl_t0, B_SCL, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = bank, held = the sound list */
+    uint32_t play = btn_hold(&ui.play_t0, B_PLAY, now, !ui.menu && !ui.confirm);   /* ATMOS: tap = view, held = metronome */
     uint32_t save = btn_hold(&ui.save_t0, B_SAVE, now, !ui.menu && !ui.confirm);
     uint32_t edit = btn_hold(&ui.edit_t0, B_EDIT, now, !ui.menu && !ui.confirm && !name_on() && !new_on() && !ui.ly);
     uint32_t octup = btn_hold(&ui.oct_t0, B_OCTUP, now, page_sheet() != 0u);   /* held: the page's sheet */
@@ -1718,6 +1977,12 @@ static void ui_input(void)
             ui.home_t0 |= 2u;
         if (pressed & (1u << panel.btn[B_SEQ]))
             ui.seq_t0 |= 2u;
+        if (pressed & (1u << panel.btn[B_ARP]))
+            ui.arp_t0 |= 2u;
+        if (pressed & (1u << panel.btn[B_SCL]))
+            ui.scl_t0 |= 2u;
+        if (pressed & (1u << panel.btn[B_PLAY]))
+            ui.play_t0 |= 2u;
         s=panel_enc(EN_PRESET);
         panel_enc(EN_ALGO);                             /* (another track: OCT- puts back the layer's track only) */
     }
@@ -1757,15 +2022,10 @@ static void ui_input(void)
     }
     if (ui.menu || ui.confirm || name_on()) {
         /* REC does nothing in the menu, a dialog or NAME (no transport start there) */
-    } else if (chain_busy() && rec == BT_TAP) {
-        ui_message("STOP TO RECORD");
-    } else if (rec == BT_TAP) {
-        rec_tap();
-    } else if (rec == BT_HOLD) {
-        if (!ui.home && cur_page()->graph == GR_SONG)    /* SONG: TAKE JAM (the jam's rows as the song) */
-            ps_jam();
-        else
-            capture_take();
+    } else if (rec == BT_TAP) {                         /* ATMOS: REC tap: the favourites view, in / out */
+        atmos_fav_view();
+    } else if (rec == BT_HOLD) {                        /* REC held: the sound in / out of the favourites */
+        atmos_fav_toggle();
     }
     if (ui.menu) {
         momentary_restore();                                      /* HOME / SAVE / REC taps do nothing here */
@@ -1796,8 +2056,12 @@ static void ui_input(void)
     if (save == BT_HOLD && !ui.confirm) {
         qsave_chord();
         qsave_poll();
-    } else if (save == BT_TAP && !ui.confirm)
-        open_family(FAM_SAVE);
+    } else if (save == BT_TAP && !ui.confirm) {
+        if (!ui.home && ui.qsv && cur_page()->graph == GR_USER)
+            save_confirm();                             /* the quick save: SAVE again does it */
+        else
+            open_family(FAM_SAVE);
+    }
     if (!ui.confirm && !lay && (edit == BT_HOLD || edit_oct)) {
         uint32_t dir = ((edit_oct >> panel.btn[B_OCTDN]) & 1u) | (((edit_oct >> panel.btn[B_OCTUP]) & 1u) << 1);
         step_edit_combo();
@@ -1849,12 +2113,33 @@ static void ui_input(void)
     }
     if (lytap)                                          /* a layer's button acts on release (held: the layer) */
         layer_tap(lytap);
-    if (seq == BT_HOLD) {                               /* SEQ held: PATTERNS, the song under it (SONG: SELECT) */
-        for (k = 0; k < NPAGES; k++) if (PAGES[k].graph == GR_PATGRID) break;
-        ui.home = 0; ui.page = (uint8_t)k; ui.fam_last[FAM_SEQ] = ui.page; page_entered();
-    } else if (seq == BT_TAP) {
-        open_family(FAM_SEQ);
-    }
+    if (seq == BT_TAP) {                                /* ATMOS: SEQ tap: SINGLE -> DUAL -> SPLIT -> SINGLE */
+        uint32_t ea = TSEL->eng_req, eb = trk[atmos_b_track(song.sel % NTRK, NTRK)].eng_req;
+        atmos_mode_next();
+        if (atmos.mode != ATMOS_SINGLE && (atmos_solo_engine(ea) || atmos_solo_engine(eb))) {
+            atmos.mode = ATMOS_SINGLE;                  /* OBERVAVE and JUPITER-8 play alone */
+            ui_message(atmos_solo_msg(atmos_solo_engine(ea) ? ea : eb));
+        } else if (atmos.mode == ATMOS_SPLIT)
+            atmos_split_say();                          /* SPLIT and the split point (the ALGORITHM encoder moves it) */
+        else
+            ui_message(atmos.mode == ATMOS_DUAL ? "DUAL LAYER" : "SINGLE");
+        ui.force = 1;
+    }                                                   /* (SEQ held: its keys set the split point, above) */
+    if (scl == BT_TAP && ((fm1_in.buttons >> panel.btn[B_SEQ]) & 1u)) {   /* SEQ held + SCL: layer B's bank */
+        ui.seq_t0 |= 2u;
+        atmos_b_bank_next();
+    } else if (scl == BT_TAP)                           /* ATMOS: SCL tap: bank A -> B -> C -> D -> E -> F */
+        atmos_bank_next();
+    else if (scl == BT_HOLD)                            /* SCL held: the sounds of the bank that is playing, nothing else */
+        atmos_open_list(1u);
+    if (arp == BT_TAP)                                  /* ATMOS: ARP tap: the arpeggiator on / off */
+        atmos_arp_toggle();
+    else if (arp == BT_HOLD)                            /* ARP held: its page (mode, rate, octaves, gate) */
+        open_family(FAM_ARP);
+    if (play == BT_TAP)                                 /* ATMOS: PLAY tap: the next view */
+        atmos_view_next();
+    else if (play == BT_HOLD)                           /* PLAY held: PANIC */
+        atmos_panic();
     if (home == BT_TAP)                                 /* HOME acts on release: a hold opens the menu */
         go_home();
     cursor_fix();                                       /* LEN may have changed (knob, editor, load) */
@@ -1877,21 +2162,10 @@ static void ui_input(void)
             continue;
         b = panel_btn_of(id);
         switch (b) {
-        case B_PLAY:
-            if ((fm1_in.buttons >> panel.btn[B_REC]) & 1u) {   /* REC + PLAY: record now */
-                rec_play();
-                break;
-            }
-            if (layer_play())                           /* (GLO held: RESTART) */
-                break;
-            if (song.playing || seq_counting() || chain_busy())
-                transport_req = 2;
-            else if (!ui.home && cur_page()->graph == GR_SONG)
-                chain_play_ui();
-            else
-                transport_req = 1;
+        case B_PLAY:                                    /* ATMOS: tap / hold: above (view, metronome) */
             break;
         case B_SEQ:
+        case B_ARP:                                     /* ATMOS: tap / hold: above (arpeggiator, its page) */
         case B_REC:                                     /* tap / hold: above */
         case B_SAVE:
         case B_GLO:
@@ -2015,9 +2289,17 @@ static void ui_input(void)
     }
 
     s = panel_enc(EN_PRESET);
+    if (s && pattern_keys_on()) {                       /* ATMOS: SEQ held + PRESETS: layer B's sound */
+        ui.seq_t0 |= 2u;
+        atmos_b_step(s > 0 ? 1 : -1);
+        s = 0;
+    }
     if (s) step_edit_combo();
     if (s && !ui.home && cur_page()->graph == GR_SCALE_PICKER) {
         scale_picker_step(list_accel(EN_PRESET, s, scale_picker_count(), 0));
+    } else if (s && !ui.home && cur_page()->graph == GR_USER) {   /* SAVE > USER: PRESETS picks the slot (as KNOB 1) */
+        ui.uslot = (uint8_t)clamp((int32_t)ui.uslot + list_accel(EN_PRESET, s, user_limit(), 0), 0, user_limit() - 1);
+        ui.qsv_arm = 0;
     } else if (s && (ui.home || cur_page()->graph == GR_BROWSE)) {
         /* PRESETS browses the selected part's sounds (all engines, then user presets) on HOME and the
          * PRESETS page only (never the steps); elsewhere (TRACKS too, where one records) a stray turn
@@ -2033,19 +2315,18 @@ static void ui_input(void)
         fm6_opsel = (uint8_t)clamp((int32_t)fm6_opsel + (s > 0 ? 1 : -1), 0, 5);
         ui.force = 1;
     }
-    if ((s = panel_enc(EN_ALGO)) != 0) {           /* ALGORITHM: the selected track, on every page */
-        step_edit_combo();
-        track_select((uint32_t)clamp((int32_t)song.sel + (s > 0 ? 1 : -1), 0, NTRK - 1));
+    if ((s = panel_enc(EN_ALGO)) != 0) {           /* ATMOS: ALGORITHM moves the split point (SPLIT mode only) */
+        if (atmos.mode == ATMOS_SPLIT)
+            atmos_split_step(s);
     }
     if ((s = panel_enc(EN_SELECT)) != 0) {          /* SELECT: pages; with SEQ / a step key / ENV / SCL: below */
         step_edit_combo();
         if(bulk_jog(s)) {
-        } else if (pattern_keys_on()) {
+        } else if (pattern_keys_on()) {                 /* ATMOS: SEQ held: SELECT does nothing (no patterns) */
             ui.seq_t0 |= 2u;
-            uint32_t from = TSEL->pattern_next < NPAT ? TSEL->pattern_next : TSEL->pattern;
-            if (pattern_request(TSEL, (uint32_t)clamp((int32_t)from + s, 0, NPAT - 1u))) ui_message("STOP SONG TO SWITCH");
-            ui.force = 1;
         } else if (step_gesture(s)) {                   /* ENV / SCL / a key held: the note's length, its place */
+        } else if (!ui.home && list_bank_on()) {        /* the bank's sound list (SCL held): SELECT changes the BANK, A B C D E F */
+            atmos_bank_step(s > 0 ? 1 : -1);
         } else if (!ui.home) {                          /* the section's pages (BPM: SEQ > TEMPO; the notes, the hits:
                                                          * KNOB 1) */
             page_scroll(s);
