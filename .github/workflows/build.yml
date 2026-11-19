@@ -1,4 +1,3 @@
-
 name: Build VintageS firmware
 
 on:
@@ -45,7 +44,7 @@ jobs:
             https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git \
             "$HOME/fw-AC79_AIoT_SDK"
 
-           - name: Build firmware
+      - name: Build firmware
         env:
           MELODEE_DUAL_CORE: '1'
           MELODEE_RAM_AUDIO: '1'
@@ -60,4 +59,3 @@ jobs:
           path: build/melodee.fwsc
           if-no-files-found: error
           retention-days: 14
-
