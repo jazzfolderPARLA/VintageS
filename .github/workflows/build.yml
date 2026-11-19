@@ -31,7 +31,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python3 -m pip install --user --break-system-packages Pillow fonttools
+          python3 -m pip install --user Pillow fonttools
 
       - name: Install JieLi toolchain
         run: |
@@ -45,7 +45,10 @@ jobs:
             https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git \
             "$HOME/fw-AC79_AIoT_SDK"
 
-      - name: Build firmware
+           - name: Build firmware
+        env:
+          MELODEE_DUAL_CORE: '1'
+          MELODEE_RAM_AUDIO: '1'
         run: |
           chmod +x build.sh
           ./build.sh
